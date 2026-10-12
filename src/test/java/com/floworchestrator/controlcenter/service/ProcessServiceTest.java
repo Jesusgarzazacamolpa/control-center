@@ -3,15 +3,17 @@ package com.floworchestrator.controlcenter.service;
 import com.floworchestrator.controlcenter.model.ProcessExecutionRequest;
 import com.floworchestrator.controlcenter.entity.ProcessExecutionEntity;
 import com.floworchestrator.controlcenter.repository.ProcessExecutionRepository;
+import com.floworchestrator.controlcenter.repository.ProcessTemplateRepository;
 import com.floworchestrator.controlcenter.repository.StepExecutionRepository;
 import com.floworchestrator.controlcenter.repository.StepTemplateRepository;
 import com.floworchestrator.controlcenter.entity.StepExecutionEntity;
 import com.floworchestrator.controlcenter.entity.StepTemplateEntity;
 import com.floworchestrator.controlcenter.enums.ProcessExecutionStatus;
 import com.floworchestrator.controlcenter.enums.StepExecutionStatus;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
@@ -30,13 +32,25 @@ class ProcessServiceTest {
     private ProcessExecutionRepository repository;
 
     @Mock
+    private ProcessTemplateRepository processTemplateRepository;
+
+    @Mock
     private StepTemplateRepository stepTemplateRepository;
 
     @Mock
     private StepExecutionRepository stepExecutionRepository;
 
-    @InjectMocks
     private ProcessService service;
+
+    @BeforeEach
+    void setUp() {
+        service = new ProcessService(
+                repository,
+                processTemplateRepository,
+                stepTemplateRepository,
+                stepExecutionRepository,
+                new ObjectMapper());
+    }
 
     @Test
     void shouldCreateExecutionWithPersistedStateAndSteps() {

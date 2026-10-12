@@ -12,6 +12,9 @@ import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Sinks;
 
+import java.util.Collections;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.UUID;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -29,6 +32,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
 @Slf4j
 public class FlowEventSseConsumer {
 
+    private static final int MAX_PROCESSED_EVENTS = 10_000;
+
     private final ProcessService processService;
     private final WebClient.Builder webClientBuilder;
 
@@ -37,7 +42,14 @@ public class FlowEventSseConsumer {
 
     private final Sinks.Many<FlowExecutionEvent> sink = Sinks.many().multicast().onBackpressureBuffer();
     private final AtomicBoolean started = new AtomicBoolean(false);
-    private final Set<String> processedEvents = ConcurrentHashMap.newKeySet();
+    private final Set<String> processedEvents = Collections.synchronizedSet(
+            Collections.newSetFromMap(new LinkedHashMap<>() {
+                @Override
+                protected boolean removeEldestEntry(Map.Entry<String, Boolean> eldest) {
+                    return size() > MAX_PROCESSED_EVENTS;
+                }
+            }));
+    private final Set<String> activeExecutions = ConcurrentHashMap.newKeySet();
 
     /**
      * Devuelve el flux de eventos. La primera invocación inicia la conexión
@@ -58,6 +70,19 @@ public class FlowEventSseConsumer {
         startIfNotStarted();
     }
 
+    /**
+     * Registra una ejecución como activa para recibir sus eventos SSE.
+     * Los eventos de ejecuciones no registradas (por ejemplo, ejecuciones
+     * anteriores entregadas por el buffer de replay) se ignoran.
+     *
+     * @param executionId ID de la ejecución a rastrear.
+     */
+    public void trackExecution(String executionId) {
+        if (executionId != null && !executionId.isBlank()) {
+            activeExecutions.add(executionId);
+        }
+    }
+
     private void startIfNotStarted() {
         if (started.compareAndSet(false, true)) {
             log.info("[SSE] Connecting to orchestrator event stream: {}/api/flows/stream", orchestratorBaseUrl);
@@ -72,6 +97,15 @@ public class FlowEventSseConsumer {
     }
 
     private void handleEvent(FlowExecutionEvent event) {
+        if (event.executionId() == null || event.executionId().isBlank()) {
+            log.warn("[SSE] Event without executionId, skipping: {}", event.eventType());
+            return;
+        }
+        if (!activeExecutions.contains(event.executionId())) {
+            log.debug("[SSE] Ignoring event for non-active execution: type={}, executionId={}",
+                    event.eventType(), event.executionId());
+            return;
+        }
         String eventKey = event.executionId() + "|" + event.eventType() + "|" + event.stepOrder();
         if (!processedEvents.add(eventKey)) {
             log.debug("[SSE] Skipping duplicate event: {}", eventKey);
@@ -81,18 +115,19 @@ public class FlowEventSseConsumer {
         try {
             log.info("[SSE] Received event: type={}, executionId={}, flowId={}, step={}",
                     event.eventType(), event.executionId(), event.flowId(), event.stepName());
-            if (event.executionId() == null || event.executionId().isBlank()) {
-                log.warn("[SSE] Event without executionId, skipping: {}", event.eventType());
-                sink.tryEmitNext(event);
-                return;
-            }
             UUID executionId = UUID.fromString(event.executionId());
             switch (event.eventType()) {
                 case "STEP_STARTED" -> handleStepStarted(executionId, event);
                 case "STEP_COMPLETED" -> handleStepCompleted(executionId, event);
                 case "STEP_FAILED" -> handleStepFailed(executionId, event);
-                case "FLOW_COMPLETED" -> handleFlowCompleted(executionId);
-                case "FLOW_FAILED" -> handleFlowFailed(executionId, event);
+                case "FLOW_COMPLETED" -> {
+                    handleFlowCompleted(executionId);
+                    activeExecutions.remove(event.executionId());
+                }
+                case "FLOW_FAILED" -> {
+                    handleFlowFailed(executionId, event);
+                    activeExecutions.remove(event.executionId());
+                }
                 default -> log.debug("[SSE] Unhandled event type: {}", event.eventType());
             }
         } catch (IllegalArgumentException ex) {

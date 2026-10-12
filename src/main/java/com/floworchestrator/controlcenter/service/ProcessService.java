@@ -13,7 +13,10 @@ import com.floworchestrator.controlcenter.repository.ProcessTemplateRepository;
 import com.floworchestrator.controlcenter.repository.ProcessExecutionRepository;
 import com.floworchestrator.controlcenter.repository.StepExecutionRepository;
 import com.floworchestrator.controlcenter.repository.StepTemplateRepository;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -29,12 +32,14 @@ import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class ProcessService {
 
     private final ProcessExecutionRepository repository;
     private final ProcessTemplateRepository processTemplateRepository;
     private final StepTemplateRepository stepTemplateRepository;
     private final StepExecutionRepository stepExecutionRepository;
+    private final ObjectMapper objectMapper;
 
     @Transactional(readOnly = true)
     public String getDefaultProcessTemplateId() {
@@ -63,7 +68,7 @@ public class ProcessService {
         ProcessExecutionEntity entity = new ProcessExecutionEntity();
         entity.setProcessTemplateId(request.getProcessTemplateId());
         entity.setStatus(ProcessExecutionStatus.PENDING);
-        entity.setGlobalContext("{\"customerId\":\"" + request.getCustomerId() + "\"}");
+        entity.setGlobalContext(buildGlobalContext(request.getCustomerId()));
         entity.setStartedAt(OffsetDateTime.now(ZoneOffset.UTC));
         entity.setLastUpdatedAt(OffsetDateTime.now(ZoneOffset.UTC));
 
@@ -140,34 +145,7 @@ public class ProcessService {
                 });
 
         OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
-        if (status == StepExecutionStatus.RUNNING) {
-            if (step.getStatus() == StepExecutionStatus.FAILED) {
-                step.setRetryCount(step.getRetryCount() + 1);
-            }
-            step.setStartedAt(now);
-            step.setCompletedAt(null);
-            step.setErrorMessage(null);
-            process.setStatus(ProcessExecutionStatus.IN_PROGRESS);
-            process.setCurrentStep(template.getName());
-            process.setErrorMessage(null);
-            process.setCompletedAt(null);
-        } else if (status == StepExecutionStatus.COMPLETED) {
-            step.setCompletedAt(now);
-            process.setCurrentStep(null);
-            process.setErrorMessage(null);
-        } else if (status == StepExecutionStatus.FAILED) {
-            step.setCompletedAt(now);
-            process.setStatus(ProcessExecutionStatus.FAILED);
-            process.setCurrentStep(template.getName());
-            process.setErrorMessage(errorMessage);
-            process.setCompletedAt(now);
-        } else if (status == StepExecutionStatus.REQUIRES_INTERVENTION) {
-            step.setCompletedAt(null);
-            process.setStatus(ProcessExecutionStatus.PAUSED_FOR_HUMAN);
-            process.setCurrentStep(template.getName());
-            process.setErrorMessage(errorMessage);
-            process.setCompletedAt(null);
-        }
+        applyStepStatus(process, step, template, status, errorMessage, now);
 
         step.setStatus(status);
         step.setErrorMessage(errorMessage);
@@ -175,6 +153,65 @@ public class ProcessService {
         repository.save(process);
         StepExecutionEntity saved = stepExecutionRepository.save(step);
         return toStepResponse(saved, template);
+    }
+
+    private String buildGlobalContext(String customerId) {
+        try {
+            return objectMapper.writeValueAsString(Map.of("customerId", customerId));
+        } catch (JsonProcessingException ex) {
+            log.warn("[PROCESS] Could not serialize global context for customerId={}", customerId, ex);
+            return "{}";
+        }
+    }
+
+    private void applyStepStatus(ProcessExecutionEntity process, StepExecutionEntity step,
+                                  StepTemplateEntity template, StepExecutionStatus status,
+                                  String errorMessage, OffsetDateTime now) {
+        switch (status) {
+            case RUNNING -> applyRunningStatus(process, step, template, now);
+            case COMPLETED -> applyCompletedStatus(process, step, now);
+            case FAILED -> applyFailedStatus(process, step, template, errorMessage, now);
+            case REQUIRES_INTERVENTION -> applyInterventionStatus(process, step, template, errorMessage);
+        }
+    }
+
+    private void applyRunningStatus(ProcessExecutionEntity process, StepExecutionEntity step,
+                                     StepTemplateEntity template, OffsetDateTime now) {
+        if (step.getStatus() == StepExecutionStatus.FAILED) {
+            step.setRetryCount(step.getRetryCount() + 1);
+        }
+        step.setStartedAt(now);
+        step.setCompletedAt(null);
+        step.setErrorMessage(null);
+        process.setStatus(ProcessExecutionStatus.IN_PROGRESS);
+        process.setCurrentStep(template.getName());
+        process.setErrorMessage(null);
+        process.setCompletedAt(null);
+    }
+
+    private void applyCompletedStatus(ProcessExecutionEntity process, StepExecutionEntity step,
+                                       OffsetDateTime now) {
+        step.setCompletedAt(now);
+        process.setCurrentStep(null);
+        process.setErrorMessage(null);
+    }
+
+    private void applyFailedStatus(ProcessExecutionEntity process, StepExecutionEntity step,
+                                    StepTemplateEntity template, String errorMessage, OffsetDateTime now) {
+        step.setCompletedAt(now);
+        process.setStatus(ProcessExecutionStatus.FAILED);
+        process.setCurrentStep(template.getName());
+        process.setErrorMessage(errorMessage);
+        process.setCompletedAt(now);
+    }
+
+    private void applyInterventionStatus(ProcessExecutionEntity process, StepExecutionEntity step,
+                                          StepTemplateEntity template, String errorMessage) {
+        step.setCompletedAt(null);
+        process.setStatus(ProcessExecutionStatus.PAUSED_FOR_HUMAN);
+        process.setCurrentStep(template.getName());
+        process.setErrorMessage(errorMessage);
+        process.setCompletedAt(null);
     }
 
     @Transactional(readOnly = true)

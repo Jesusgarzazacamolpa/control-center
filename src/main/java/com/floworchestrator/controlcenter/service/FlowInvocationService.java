@@ -11,6 +11,7 @@ import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.WebClient;
 
+import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
 
@@ -42,6 +43,7 @@ public class FlowInvocationService {
         flowEventSseConsumer.ensureStarted();
 
         ProcessExecutionResponse execution = processService.createExecution(request);
+        flowEventSseConsumer.trackExecution(execution.getId());
 
         String templateName = processTemplateRepository.findById(UUID.fromString(request.getProcessTemplateId()))
                 .map(ProcessTemplateEntity::getName)
@@ -55,7 +57,7 @@ public class FlowInvocationService {
         log.info("[FLOW] Invoking orchestrator: executionId={}, flowId={}, customerId={}",
                 executionId, flowId, request.getCustomerId());
 
-        Map<String, Object> body = new java.util.HashMap<>();
+        Map<String, Object> body = new HashMap<>();
         body.put("executionId", executionId);
         body.put("flowId", flowId);
         body.put("customerId", request.getCustomerId());

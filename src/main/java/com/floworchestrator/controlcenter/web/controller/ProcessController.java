@@ -32,7 +32,6 @@ public class ProcessController {
      * @return {@link ProcessExecutionResponse} con el resultado de la creación de la ejecución, respuesta HTTP 201 Created.
      */
     @PostMapping("/processes")
-    @ResponseStatus(HttpStatus.CREATED)
     public ResponseEntity<ProcessExecutionResponse> createExecution(@Valid @RequestBody ProcessExecutionRequest request) {
         return ResponseEntity.status(HttpStatus.CREATED).body(processService.createExecution(request));
     }
@@ -46,7 +45,6 @@ public class ProcessController {
      * @return {@link ProcessExecutionResponse} con la ejecución creada (estado PENDING).
      */
     @PostMapping("/processes/start")
-    @ResponseStatus(HttpStatus.CREATED)
     public ResponseEntity<ProcessExecutionResponse> startExecution(
             @Valid @RequestBody ProcessExecutionRequest request) {
         return ResponseEntity.status(HttpStatus.CREATED).body(flowInvocationService.startProcess(request));

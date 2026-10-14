@@ -215,6 +215,20 @@ public class ProcessService {
     }
 
     @Transactional(readOnly = true)
+    public List<ProcessExecutionResponse> listExecutions() {
+        return repository.findAll().stream()
+                .map(this::toResponse)
+                .toList();
+    }
+
+    @Transactional(readOnly = true)
+    public ProcessExecutionResponse getExecution(UUID executionId) {
+        ProcessExecutionEntity entity = repository.findById(executionId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Process execution not found"));
+        return toResponse(entity);
+    }
+
+    @Transactional(readOnly = true)
     public List<ProcessExecutionStepResponse> getExecutionSteps(UUID executionId) {
         if (!repository.existsById(executionId)) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Process execution not found");
@@ -242,5 +256,35 @@ public class ProcessService {
         response.setStartedAt(step.getStartedAt());
         response.setCompletedAt(step.getCompletedAt());
         return response;
+    }
+
+    private ProcessExecutionResponse toResponse(ProcessExecutionEntity entity) {
+        ProcessExecutionResponse response = new ProcessExecutionResponse();
+        response.setId(entity.getId().toString());
+        response.setProcessTemplateId(entity.getProcessTemplateId());
+        response.setCustomerId(extractCustomerId(entity));
+        response.setStatus(entity.getStatus());
+        response.setCurrentStep(entity.getCurrentStep());
+        response.setErrorMessage(entity.getErrorMessage());
+        response.setSteps(stepTemplateRepository
+                .findAllByProcessTemplateIdOrderByStepOrderAsc(entity.getProcessTemplateIdUuid())
+                .stream()
+                .map(StepTemplateEntity::getName)
+                .toList());
+        return response;
+    }
+
+    private String extractCustomerId(ProcessExecutionEntity entity) {
+        if (entity.getGlobalContext() == null || entity.getGlobalContext().isBlank()) {
+            return null;
+        }
+        try {
+            Map<String, Object> context = objectMapper.readValue(entity.getGlobalContext(), Map.class);
+            Object customerId = context.get("customerId");
+            return customerId != null ? customerId.toString() : null;
+        } catch (JsonProcessingException ex) {
+            log.warn("[PROCESS] Could not parse global context for execution: {}", entity.getId(), ex);
+            return null;
+        }
     }
 }

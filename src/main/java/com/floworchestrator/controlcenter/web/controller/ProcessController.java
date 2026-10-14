@@ -84,6 +84,16 @@ public class ProcessController {
         return processService.getExecutionSteps(id);
     }
 
+    @GetMapping("/processes")
+    public List<ProcessExecutionResponse> listExecutions() {
+        return processService.listExecutions();
+    }
+
+    @GetMapping("/processes/{id}")
+    public ProcessExecutionResponse getExecution(@PathVariable UUID id) {
+        return processService.getExecution(id);
+    }
+
     /**
      * Endpoint de salud del Control Center.
      *

@@ -11,12 +11,14 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import reactor.core.publisher.Flux;
 
+import java.util.UUID;
+
 /**
  * Endpoint SSE que expone los eventos de ejecución recibidos del Orchestrator.
  * <p>
  * El endpoint {@code /events} retransmite todos los eventos en tiempo real.
  * El endpoint {@code /{id}/events} filtra por una ejecución específica,
- * permitiendo a un cliente frontend hacer seguimiento individual de un proceso.
+ * permitiendo a un frontend hacer seguimiento individual de un proceso.
  */
 @RestController
 @RequestMapping("/api/processes")
@@ -27,23 +29,25 @@ public class ProcessEventController {
 
     @GetMapping(value = "/events", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public Flux<ServerSentEvent<FlowExecutionEvent>> streamEvents() {
-        return flowEventSseConsumer.stream()
-                .map(event -> ServerSentEvent.<FlowExecutionEvent>builder()
-                        .id(event.executionId() + "-" + event.timestamp().toInstant().toEpochMilli())
-                        .event(event.eventType())
-                        .data(event)
-                        .build());
+        return flowEventSseConsumer.stream().map(this::toServerSentEvent);
     }
 
     @GetMapping(value = "/{id}/events", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
-    public Flux<ServerSentEvent<FlowExecutionEvent>> streamEventsForExecution(@PathVariable String id) {
-        flowEventSseConsumer.trackExecution(id);
+    public Flux<ServerSentEvent<FlowExecutionEvent>> streamEventsForExecution(@PathVariable UUID id) {
+        String executionId = id.toString();
+        flowEventSseConsumer.trackExecution(executionId);
         return flowEventSseConsumer.stream()
-                .filter(event -> id.equals(event.executionId()))
-                .map(event -> ServerSentEvent.<FlowExecutionEvent>builder()
-                        .id(event.executionId() + "-" + event.timestamp().toInstant().toEpochMilli())
-                        .event(event.eventType())
-                        .data(event)
-                        .build());
+                .filter(event -> executionId.equals(event.executionId()))
+                .map(this::toServerSentEvent);
+    }
+
+    private ServerSentEvent<FlowExecutionEvent> toServerSentEvent(FlowExecutionEvent event) {
+        long epochMilli = event.timestamp() != null
+                ? event.timestamp().toInstant().toEpochMilli()
+                : System.currentTimeMillis();
+        return ServerSentEvent.<FlowExecutionEvent>builder()
+                .id(event.executionId() + "-" + epochMilli)
+                .data(event)
+                .build();
     }
 }

@@ -1,19 +1,21 @@
 package com.floworchestrator.controlcenter.model;
 
+import com.floworchestrator.controlcenter.enums.ProcessExecutionStatus;
+
 import java.util.List;
-import java.util.UUID;
 
-import lombok.Data;
-import lombok.NoArgsConstructor;
-
-@Data
-@NoArgsConstructor
-public class ProcessExecutionResponse {
-    private String id = UUID.randomUUID().toString();
-    private String processTemplateId;
-    private String customerId;
-    private String status = "PENDING";
-    private String currentStep;
-    private String errorMessage;
-    private List<String> steps;
+public record ProcessExecutionResponse(
+        String id,
+        String processTemplateId,
+        String customerId,
+        ProcessExecutionStatus status,
+        String currentStep,
+        String errorMessage,
+        String userErrorTitle,
+        String userErrorMessage,
+        String userErrorActionLabel,
+        String userErrorStatusType,
+        String traceId,
+        List<String> steps
+) {
 }

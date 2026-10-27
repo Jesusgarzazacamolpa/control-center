@@ -1,17 +1,22 @@
 package com.floworchestrator.controlcenter.model;
 
 import jakarta.validation.constraints.NotBlank;
-import lombok.Data;
+import jakarta.validation.constraints.Pattern;
 
-@Data
-public class ProcessExecutionRequest {
-    @NotBlank(message = "processTemplateId is required")
-    private String processTemplateId;
+/**
+ * Solicitud de creación de una ejecución de proceso.
+ */
+public record ProcessExecutionRequest(
+        @NotBlank(message = "El identificador de la plantilla de proceso es obligatorio.")
+        @Pattern(regexp = "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+                message = "El identificador de la plantilla no es válido. Debe tener formato UUID.")
+        String processTemplateId,
 
-    @NotBlank(message = "customerId is required")
-    private String customerId;
+        @NotBlank(message = "El identificador del cliente es obligatorio.")
+        String customerId,
 
-    private String vehicleId;
+        String vehicleId,
 
-    private String salesAgentId;
+        String salesAgentId
+) {
 }

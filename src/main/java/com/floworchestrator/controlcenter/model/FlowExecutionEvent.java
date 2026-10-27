@@ -18,6 +18,11 @@ public record FlowExecutionEvent(
         String server,
         String status,
         String errorMessage,
+        String userErrorTitle,
+        String userErrorMessage,
+        String userErrorActionLabel,
+        String userErrorStatusType,
+        String traceId,
         OffsetDateTime timestamp
 ) {
 }

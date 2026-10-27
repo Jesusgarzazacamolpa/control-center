@@ -44,8 +44,29 @@ public class ProcessExecutionEntity {
     @Column(name = "current_step")
     private String currentStep;
 
+    @Column(name = "vehicle_id")
+    private String vehicleId;
+
+    @Column(name = "sales_agent_id")
+    private String salesAgentId;
+
     @Column(name = "error_message", columnDefinition = "text")
     private String errorMessage;
+
+    @Column(name = "user_error_title", columnDefinition = "text")
+    private String userErrorTitle;
+
+    @Column(name = "user_error_message", columnDefinition = "text")
+    private String userErrorMessage;
+
+    @Column(name = "user_error_action_label", columnDefinition = "text")
+    private String userErrorActionLabel;
+
+    @Column(name = "user_error_status_type", columnDefinition = "text")
+    private String userErrorStatusType;
+
+    @Column(name = "trace_id")
+    private String traceId;
 
     @Column(name = "started_at")
     private OffsetDateTime startedAt;
@@ -55,32 +76,4 @@ public class ProcessExecutionEntity {
 
     @Column(name = "last_updated_at")
     private OffsetDateTime lastUpdatedAt;
-
-    public String getProcessTemplateId() {
-        return processTemplateId != null ? processTemplateId.toString() : null;
-    }
-
-    public UUID getProcessTemplateIdUuid() {
-        return processTemplateId;
-    }
-
-    public void setProcessTemplateId(String processTemplateId) {
-        this.processTemplateId = UUID.fromString(processTemplateId);
-    }
-
-    public void setProcessTemplateId(UUID processTemplateId) {
-        this.processTemplateId = processTemplateId;
-    }
-
-    public String getStatus() {
-        return status.name();
-    }
-
-    public void setStatus(String status) {
-        this.status = ProcessExecutionStatus.valueOf(status);
-    }
-
-    public void setStatus(ProcessExecutionStatus status) {
-        this.status = status;
-    }
 }

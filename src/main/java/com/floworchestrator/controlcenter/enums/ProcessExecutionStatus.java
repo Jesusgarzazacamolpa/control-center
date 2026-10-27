@@ -6,5 +6,13 @@ public enum ProcessExecutionStatus {
     PAUSED_FOR_HUMAN,
     COMPLETED,
     FAILED,
-    CANCELLED
+    CANCELLED;
+
+    public boolean isTerminal() {
+        return this == COMPLETED || this == FAILED || this == CANCELLED;
+    }
+
+    public boolean isRetryable() {
+        return this == PAUSED_FOR_HUMAN || this == FAILED;
+    }
 }

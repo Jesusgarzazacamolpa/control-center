@@ -1,31 +1,33 @@
 package com.floworchestrator.controlcenter.service;
 
+import com.floworchestrator.controlcenter.client.OrchestratorClient;
 import com.floworchestrator.controlcenter.enums.ProcessExecutionStatus;
 import com.floworchestrator.controlcenter.enums.StepExecutionStatus;
+import com.floworchestrator.controlcenter.model.CreateInterventionRequest;
 import com.floworchestrator.controlcenter.model.FlowExecutionEvent;
+import com.floworchestrator.controlcenter.model.ProcessExecutionStatusRequest;
+import com.floworchestrator.controlcenter.model.StepExecutionStatusRequest;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.http.MediaType;
+import org.slf4j.MDC;
 import org.springframework.stereotype.Component;
-import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Sinks;
 
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.Map;
-import java.util.UUID;
 import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
- * Consume el stream SSE del Orchestrator y realiza el bitácora de pasos
- * y ejecuciones en la base de datos del Control Center.
+ * Consume el stream SSE del Orchestrator y registra el bitácora de pasos y
+ * ejecuciones en la base de datos del Control Center.
  * <p>
- * La conexión al Orchestrator se inicia bajo demanda: la primera vez que un
- * cliente se suscribe al endpoint SSE de este servicio.
+ * La conexión se inicia bajo demanda: la primera vez que un cliente se suscribe
+ * al endpoint SSE de este servicio.
  */
 @Component
 @RequiredArgsConstructor
@@ -35,10 +37,7 @@ public class FlowEventSseConsumer {
     private static final int MAX_PROCESSED_EVENTS = 10_000;
 
     private final ProcessService processService;
-    private final WebClient.Builder webClientBuilder;
-
-    @Value("${services.orchestrator.base-url}")
-    private String orchestratorBaseUrl;
+    private final OrchestratorClient orchestratorClient;
 
     private final Sinks.Many<FlowExecutionEvent> sink = Sinks.many().multicast().onBackpressureBuffer();
     private final AtomicBoolean started = new AtomicBoolean(false);
@@ -54,8 +53,6 @@ public class FlowEventSseConsumer {
     /**
      * Devuelve el flux de eventos. La primera invocación inicia la conexión
      * al stream SSE del Orchestrator.
-     *
-     * @return Flux de eventos de ejecución.
      */
     public Flux<FlowExecutionEvent> stream() {
         startIfNotStarted();
@@ -64,7 +61,6 @@ public class FlowEventSseConsumer {
 
     /**
      * Asegura que la conexión al stream SSE del Orchestrator esté activa.
-     * Se invoca al iniciar un proceso para garantizar el bitácora de pasos.
      */
     public void ensureStarted() {
         startIfNotStarted();
@@ -72,10 +68,6 @@ public class FlowEventSseConsumer {
 
     /**
      * Registra una ejecución como activa para recibir sus eventos SSE.
-     * Los eventos de ejecuciones no registradas (por ejemplo, ejecuciones
-     * anteriores entregadas por el buffer de replay) se ignoran.
-     *
-     * @param executionId ID de la ejecución a rastrear.
      */
     public void trackExecution(String executionId) {
         if (executionId != null && !executionId.isBlank()) {
@@ -83,22 +75,24 @@ public class FlowEventSseConsumer {
         }
     }
 
+    public void reRegisterExecution(String executionId) {
+        if (executionId != null && !executionId.isBlank()) {
+            activeExecutions.add(executionId);
+            processedEvents.removeIf(key -> key.startsWith(executionId + "|"));
+        }
+    }
+
     private void startIfNotStarted() {
         if (started.compareAndSet(false, true)) {
-            log.info("[SSE] Connecting to orchestrator event stream: {}/api/flows/stream", orchestratorBaseUrl);
-            webClientBuilder.build()
-                    .get()
-                    .uri(orchestratorBaseUrl + "/api/flows/stream")
-                    .accept(MediaType.TEXT_EVENT_STREAM)
-                    .retrieve()
-                    .bodyToFlux(FlowExecutionEvent.class)
+            log.info("[SSE] Connecting to orchestrator event stream");
+            orchestratorClient.streamEvents()
                     .subscribe(this::handleEvent, this::handleError, this::handleComplete);
         }
     }
 
     private void handleEvent(FlowExecutionEvent event) {
         if (event.executionId() == null || event.executionId().isBlank()) {
-            log.warn("[SSE] Event without executionId, skipping: {}", event.eventType());
+            log.warn("[SSE] Event without executionId, skipping: type={}", event.eventType());
             return;
         }
         if (!activeExecutions.contains(event.executionId())) {
@@ -112,7 +106,21 @@ public class FlowEventSseConsumer {
             sink.tryEmitNext(event);
             return;
         }
+        if (event.eventType() == null) {
+            log.warn("[SSE] Event without type, skipping: executionId={}", event.executionId());
+            return;
+        }
+        if (isStepEvent(event.eventType()) && event.stepOrder() == null) {
+            log.warn("[SSE] Step event without stepOrder, skipping: type={}, executionId={}",
+                    event.eventType(), event.executionId());
+            return;
+        }
+
+        String previousTraceId = MDC.get("traceId");
         try {
+            if (event.traceId() != null && !event.traceId().isBlank()) {
+                MDC.put("traceId", event.traceId());
+            }
             log.info("[SSE] Received event: type={}, executionId={}, flowId={}, step={}",
                     event.eventType(), event.executionId(), event.flowId(), event.stepName());
             UUID executionId = UUID.fromString(event.executionId());
@@ -120,6 +128,13 @@ public class FlowEventSseConsumer {
                 case "STEP_STARTED" -> handleStepStarted(executionId, event);
                 case "STEP_COMPLETED" -> handleStepCompleted(executionId, event);
                 case "STEP_FAILED" -> handleStepFailed(executionId, event);
+                case "STEP_REQUIRES_INTERVENTION" -> handleStepRequiresIntervention(executionId, event);
+                case "FLOW_PAUSED" -> log.info("[SSE] Flow paused for human intervention: executionId={}, step={}",
+                        event.executionId(), event.stepName());
+                case "FLOW_RESUMED" -> {
+                    processService.resumeExecution(executionId);
+                    log.info("[SSE] Flow resumed: executionId={}", event.executionId());
+                }
                 case "FLOW_COMPLETED" -> {
                     handleFlowCompleted(executionId);
                     activeExecutions.remove(event.executionId());
@@ -135,48 +150,83 @@ public class FlowEventSseConsumer {
         } catch (Exception ex) {
             log.error("[SSE] Error processing event: type={}, executionId={}",
                     event.eventType(), event.executionId(), ex);
+        } finally {
+            if (previousTraceId != null) {
+                MDC.put("traceId", previousTraceId);
+            } else {
+                MDC.remove("traceId");
+            }
         }
         sink.tryEmitNext(event);
     }
 
+    private boolean isStepEvent(String eventType) {
+        return switch (eventType) {
+            case "STEP_STARTED", "STEP_COMPLETED", "STEP_FAILED", "STEP_REQUIRES_INTERVENTION" -> true;
+            default -> false;
+        };
+    }
+
     private void handleStepStarted(UUID executionId, FlowExecutionEvent event) {
-        processService.updateStepExecution(
-                executionId,
-                event.stepOrder(),
-                StepExecutionStatus.RUNNING,
-                null);
+        processService.updateStepExecution(executionId, event.stepOrder(),
+                StepExecutionStatusRequest.of(StepExecutionStatus.RUNNING));
     }
 
     private void handleStepCompleted(UUID executionId, FlowExecutionEvent event) {
-        processService.updateStepExecution(
-                executionId,
-                event.stepOrder(),
-                StepExecutionStatus.COMPLETED,
-                null);
+        processService.updateStepExecution(executionId, event.stepOrder(),
+                StepExecutionStatusRequest.of(StepExecutionStatus.COMPLETED));
     }
 
     private void handleStepFailed(UUID executionId, FlowExecutionEvent event) {
-        processService.updateStepExecution(
-                executionId,
-                event.stepOrder(),
+        StepExecutionStatusRequest request = new StepExecutionStatusRequest(
                 StepExecutionStatus.FAILED,
-                event.errorMessage());
+                event.errorMessage(),
+                event.userErrorTitle(),
+                event.userErrorMessage(),
+                event.userErrorActionLabel(),
+                event.userErrorStatusType());
+        processService.updateStepExecution(executionId, event.stepOrder(), request);
+    }
+
+    private void handleStepRequiresIntervention(UUID executionId, FlowExecutionEvent event) {
+        log.info("[SSE] Step requires human intervention: executionId={}, step={}, error={}",
+                event.executionId(), event.stepName(), event.errorMessage());
+
+        StepExecutionStatusRequest stepRequest = new StepExecutionStatusRequest(
+                StepExecutionStatus.REQUIRES_INTERVENTION,
+                event.errorMessage(),
+                event.userErrorTitle(),
+                event.userErrorMessage(),
+                event.userErrorActionLabel(),
+                event.userErrorStatusType());
+        processService.updateStepExecution(executionId, event.stepOrder(), stepRequest);
+
+        CreateInterventionRequest interventionRequest = new CreateInterventionRequest(
+                event.stepName(),
+                event.stepOrder(),
+                event.errorMessage(),
+                event.userErrorTitle(),
+                event.userErrorMessage(),
+                event.userErrorActionLabel(),
+                event.userErrorStatusType());
+        processService.createIntervention(executionId, interventionRequest);
     }
 
     private void handleFlowCompleted(UUID executionId) {
-        processService.updateExecutionStatus(
-                executionId,
-                ProcessExecutionStatus.COMPLETED,
-                null,
-                null);
+        processService.updateExecutionStatus(executionId,
+                ProcessExecutionStatusRequest.of(ProcessExecutionStatus.COMPLETED));
     }
 
     private void handleFlowFailed(UUID executionId, FlowExecutionEvent event) {
-        processService.updateExecutionStatus(
-                executionId,
+        ProcessExecutionStatusRequest request = new ProcessExecutionStatusRequest(
                 ProcessExecutionStatus.FAILED,
                 event.stepName(),
-                event.errorMessage());
+                event.errorMessage(),
+                event.userErrorTitle(),
+                event.userErrorMessage(),
+                event.userErrorActionLabel(),
+                event.userErrorStatusType());
+        processService.updateExecutionStatus(executionId, request);
     }
 
     private void handleError(Throwable throwable) {

@@ -74,10 +74,10 @@ public class WebClientOrchestratorClient implements OrchestratorClient {
                     .block(REQUEST_TIMEOUT);
             return true;
         } catch (WebClientResponseException.NotFound ex) {
-            log.warn("[ORCHESTRATOR] No paused state found for execution: executionId={}", executionId);
+            log.warn("[ORCHESTRATOR] No se encontró estado pausado para la ejecución: executionId={}", executionId);
             return false;
         } catch (WebClientException | IllegalStateException ex) {
-            throw new OrchestratorUnavailableException("resume flow " + executionId, ex);
+            throw new OrchestratorUnavailableException("reanudar el flujo " + executionId, ex);
         }
     }
 
@@ -92,7 +92,7 @@ public class WebClientOrchestratorClient implements OrchestratorClient {
                     .block(REQUEST_TIMEOUT);
         } catch (WebClientException | IllegalStateException ex) {
             throw new OrchestratorUnavailableException(
-                    "retry step " + stepOrder + " of execution " + executionId, ex);
+                    "reintentar el paso " + stepOrder + " de la ejecución " + executionId, ex);
         }
     }
 

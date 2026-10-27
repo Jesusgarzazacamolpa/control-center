@@ -9,6 +9,6 @@ public class InvalidInterventionStatusException extends AppException {
         super(HttpStatus.BAD_REQUEST,
                 FlowCode.INVALID_INTERVENTION_STATUS,
                 "El estatus enviado no es válido. Usa PENDING_REVIEW, APPROVED o REJECTED.",
-                "Invalid intervention status: " + status);
+                "Estatus de intervención inválido: " + status);
     }
 }

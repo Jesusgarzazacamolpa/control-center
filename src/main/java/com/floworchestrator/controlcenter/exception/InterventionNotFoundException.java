@@ -11,6 +11,6 @@ public class InterventionNotFoundException extends AppException {
         super(HttpStatus.NOT_FOUND,
                 FlowCode.INTERVENTION_NOT_FOUND,
                 "No encontramos la intervención solicitada. Actualiza la lista e intenta nuevamente.",
-                "Intervention not found: " + interventionId);
+                "No se encontró la intervención: " + interventionId);
     }
 }

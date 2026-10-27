@@ -84,7 +84,7 @@ public class FlowEventSseConsumer {
 
     private void startIfNotStarted() {
         if (started.compareAndSet(false, true)) {
-            log.info("[SSE] Connecting to orchestrator event stream");
+            log.info("[SSE] Conectando al stream de eventos del orquestador");
             orchestratorClient.streamEvents()
                     .subscribe(this::handleEvent, this::handleError, this::handleComplete);
         }
@@ -92,26 +92,26 @@ public class FlowEventSseConsumer {
 
     private void handleEvent(FlowExecutionEvent event) {
         if (event.executionId() == null || event.executionId().isBlank()) {
-            log.warn("[SSE] Event without executionId, skipping: type={}", event.eventType());
+            log.warn("[SSE] Evento sin executionId; se omite: type={}", event.eventType());
             return;
         }
         if (!activeExecutions.contains(event.executionId())) {
-            log.debug("[SSE] Ignoring event for non-active execution: type={}, executionId={}",
+            log.debug("[SSE] Se ignora el evento de una ejecución no activa: type={}, executionId={}",
                     event.eventType(), event.executionId());
             return;
         }
         String eventKey = event.executionId() + "|" + event.eventType() + "|" + event.stepOrder();
         if (!processedEvents.add(eventKey)) {
-            log.debug("[SSE] Skipping duplicate event: {}", eventKey);
+            log.debug("[SSE] Se omite el evento duplicado: {}", eventKey);
             sink.tryEmitNext(event);
             return;
         }
         if (event.eventType() == null) {
-            log.warn("[SSE] Event without type, skipping: executionId={}", event.executionId());
+            log.warn("[SSE] Evento sin tipo; se omite: executionId={}", event.executionId());
             return;
         }
         if (isStepEvent(event.eventType()) && event.stepOrder() == null) {
-            log.warn("[SSE] Step event without stepOrder, skipping: type={}, executionId={}",
+            log.warn("[SSE] Evento de paso sin stepOrder; se omite: type={}, executionId={}",
                     event.eventType(), event.executionId());
             return;
         }
@@ -121,7 +121,7 @@ public class FlowEventSseConsumer {
             if (event.traceId() != null && !event.traceId().isBlank()) {
                 MDC.put("traceId", event.traceId());
             }
-            log.info("[SSE] Received event: type={}, executionId={}, flowId={}, step={}",
+            log.info("[SSE] Evento recibido: type={}, executionId={}, flowId={}, step={}",
                     event.eventType(), event.executionId(), event.flowId(), event.stepName());
             UUID executionId = UUID.fromString(event.executionId());
             switch (event.eventType()) {
@@ -129,11 +129,11 @@ public class FlowEventSseConsumer {
                 case "STEP_COMPLETED" -> handleStepCompleted(executionId, event);
                 case "STEP_FAILED" -> handleStepFailed(executionId, event);
                 case "STEP_REQUIRES_INTERVENTION" -> handleStepRequiresIntervention(executionId, event);
-                case "FLOW_PAUSED" -> log.info("[SSE] Flow paused for human intervention: executionId={}, step={}",
+                case "FLOW_PAUSED" -> log.info("[SSE] Flujo pausado para intervención humana: executionId={}, step={}",
                         event.executionId(), event.stepName());
                 case "FLOW_RESUMED" -> {
                     processService.resumeExecution(executionId);
-                    log.info("[SSE] Flow resumed: executionId={}", event.executionId());
+                    log.info("[SSE] Flujo reanudado: executionId={}", event.executionId());
                 }
                 case "FLOW_COMPLETED" -> {
                     handleFlowCompleted(executionId);
@@ -143,12 +143,12 @@ public class FlowEventSseConsumer {
                     handleFlowFailed(executionId, event);
                     activeExecutions.remove(event.executionId());
                 }
-                default -> log.debug("[SSE] Unhandled event type: {}", event.eventType());
+                default -> log.debug("[SSE] Tipo de evento no manejado: {}", event.eventType());
             }
         } catch (IllegalArgumentException ex) {
-            log.warn("[SSE] Invalid executionId in event: {}", event.executionId(), ex);
+            log.warn("[SSE] executionId inválido en el evento: {}", event.executionId(), ex);
         } catch (Exception ex) {
-            log.error("[SSE] Error processing event: type={}, executionId={}",
+            log.error("[SSE] Error al procesar el evento: type={}, executionId={}",
                     event.eventType(), event.executionId(), ex);
         } finally {
             if (previousTraceId != null) {
@@ -189,7 +189,7 @@ public class FlowEventSseConsumer {
     }
 
     private void handleStepRequiresIntervention(UUID executionId, FlowExecutionEvent event) {
-        log.info("[SSE] Step requires human intervention: executionId={}, step={}, error={}",
+        log.info("[SSE] El paso requiere intervención humana: executionId={}, step={}, error={}",
                 event.executionId(), event.stepName(), event.errorMessage());
 
         StepExecutionStatusRequest stepRequest = new StepExecutionStatusRequest(
@@ -230,12 +230,12 @@ public class FlowEventSseConsumer {
     }
 
     private void handleError(Throwable throwable) {
-        log.error("[SSE] Event stream error", throwable);
+        log.error("[SSE] Error en el stream de eventos", throwable);
         started.set(false);
     }
 
     private void handleComplete() {
-        log.info("[SSE] Event stream completed");
+        log.info("[SSE] Stream de eventos finalizado");
         started.set(false);
     }
 }

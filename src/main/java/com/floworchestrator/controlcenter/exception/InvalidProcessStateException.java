@@ -12,6 +12,6 @@ public class InvalidProcessStateException extends AppException {
         super(HttpStatus.CONFLICT,
                 FlowCode.INVALID_PROCESS_STATE,
                 "El proceso no se puede reintentar en su estado actual. Actualiza la pantalla y vuelve a intentarlo.",
-                "Process execution " + executionId + " cannot be retried from status " + currentStatus);
+                "La ejecución del proceso " + executionId + " no se puede reintentar desde el estatus " + currentStatus);
     }
 }

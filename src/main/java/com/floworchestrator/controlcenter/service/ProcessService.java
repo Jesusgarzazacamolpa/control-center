@@ -199,7 +199,7 @@ public class ProcessService {
         process.setLastUpdatedAt(now);
         repository.save(process);
 
-        log.info("[INTERVENTION] Created intervention: id={}, processId={}, step={}",
+        log.info("[INTERVENTION] Intervención creada: id={}, processId={}, step={}",
                 saved.getId(), executionId, request.stepName());
         return toInterventionResponse(saved);
     }
@@ -237,7 +237,7 @@ public class ProcessService {
         entity.setUpdatedAt(OffsetDateTime.now(ZoneOffset.UTC));
 
         InterventionEntity saved = interventionRepository.save(entity);
-        log.info("[INTERVENTION] Updated intervention: id={}, status={}", saved.getId(), saved.getStatus());
+        log.info("[INTERVENTION] Intervención actualizada: id={}, status={}", saved.getId(), saved.getStatus());
         return toInterventionResponse(saved);
     }
 
@@ -248,7 +248,7 @@ public class ProcessService {
         entity.setUpdatedAt(OffsetDateTime.now(ZoneOffset.UTC));
 
         InterventionEntity saved = interventionRepository.save(entity);
-        log.info("[INTERVENTION] Assigned intervention: id={}, assignee={}", saved.getId(), assignee);
+        log.info("[INTERVENTION] Intervención asignada: id={}, assignee={}", saved.getId(), assignee);
         return toInterventionResponse(saved);
     }
 
@@ -256,7 +256,7 @@ public class ProcessService {
     public void resumeExecution(UUID executionId) {
         ProcessExecutionEntity process = getExecutionEntity(executionId);
         if (!process.getStatus().isRetryable()) {
-            log.debug("[INTERVENTION] Execution is not paused or failed, skipping resume: id={}, status={}",
+            log.debug("[INTERVENTION] La ejecución no está pausada ni fallida; se omite la reanudación: id={}, status={}",
                     executionId, process.getStatus());
             return;
         }
@@ -265,7 +265,7 @@ public class ProcessService {
         process.setCompletedAt(null);
         process.setLastUpdatedAt(OffsetDateTime.now(ZoneOffset.UTC));
         repository.save(process);
-        log.info("[INTERVENTION] Execution resumed via SSE event: id={}", executionId);
+        log.info("[INTERVENTION] Ejecución reanudada mediante evento SSE: id={}", executionId);
     }
 
     private void applyInterventionStatus(InterventionEntity entity, String rawStatus) {
@@ -291,7 +291,7 @@ public class ProcessService {
         process.setErrorMessage(null);
         process.setLastUpdatedAt(OffsetDateTime.now(ZoneOffset.UTC));
         repository.save(process);
-        log.info("[INTERVENTION] Resumed process execution: id={}", executionId);
+        log.info("[INTERVENTION] Ejecución del proceso reanudada: id={}", executionId);
     }
 
     private ProcessExecutionEntity getExecutionEntity(UUID executionId) {
@@ -308,7 +308,7 @@ public class ProcessService {
         try {
             return objectMapper.writeValueAsString(Map.of("customerId", customerId));
         } catch (JsonProcessingException ex) {
-            log.warn("[PROCESS] Could not serialize global context for customerId={}", customerId, ex);
+            log.warn("[PROCESS] No se pudo serializar el contexto global para customerId={}", customerId, ex);
             return "{}";
         }
     }
@@ -321,7 +321,7 @@ public class ProcessService {
             case COMPLETED -> applyCompletedStatus(process, step, now);
             case FAILED -> applyFailedStatus(process, step, template, request.errorMessage(), now);
             case REQUIRES_INTERVENTION -> applyInterventionStatus(process, step, template, request.errorMessage());
-            case PENDING -> log.debug("[PROCESS] Step marked as PENDING: stepOrder={}", template.getStepOrder());
+            case PENDING -> log.debug("[PROCESS] Paso marcado como PENDING: stepOrder={}", template.getStepOrder());
         }
     }
 
@@ -444,7 +444,7 @@ public class ProcessService {
             Object customerId = context.get("customerId");
             return customerId != null ? customerId.toString() : null;
         } catch (JsonProcessingException ex) {
-            log.warn("[PROCESS] Could not parse global context for execution: {}", entity.getId(), ex);
+            log.warn("[PROCESS] No se pudo analizar el contexto global de la ejecución: {}", entity.getId(), ex);
             return null;
         }
     }

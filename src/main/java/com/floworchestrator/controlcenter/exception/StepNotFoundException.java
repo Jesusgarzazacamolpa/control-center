@@ -11,6 +11,6 @@ public class StepNotFoundException extends AppException {
         super(HttpStatus.NOT_FOUND,
                 FlowCode.STEP_NOT_FOUND,
                 "El paso solicitado no existe dentro de este proceso. Actualiza la pantalla e intenta nuevamente.",
-                "Step template not found: processTemplateId=" + processTemplateId + ", stepOrder=" + stepOrder);
+                "No se encontró la plantilla del paso: processTemplateId=" + processTemplateId + ", stepOrder=" + stepOrder);
     }
 }

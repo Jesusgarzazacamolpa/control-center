@@ -11,6 +11,6 @@ public class ProcessNotFoundException extends AppException {
         super(HttpStatus.NOT_FOUND,
                 FlowCode.PROCESS_NOT_FOUND,
                 "No encontramos el proceso solicitado. Actualiza la pantalla e intenta nuevamente.",
-                "Process execution not found: " + executionId);
+                "No se encontró la ejecución del proceso: " + executionId);
     }
 }

@@ -9,6 +9,6 @@ public class ProcessTemplateNotFoundException extends AppException {
         super(HttpStatus.NOT_FOUND,
                 FlowCode.TEMPLATE_NOT_FOUND,
                 "La plantilla de proceso solicitada no está disponible. Intenta con otra plantilla o vuelve a intentarlo más tarde.",
-                "Active process template not found: " + templateName);
+                "No se encontró la plantilla de proceso activa: " + templateName);
     }
 }

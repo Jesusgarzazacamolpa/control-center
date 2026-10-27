@@ -69,12 +69,12 @@ public class FlowInvocationService {
      * @return {@code false} cuando no existe estado previo y aplica un reinicio.
      */
     public boolean resumeFlow(UUID executionId, String userInput) {
-        log.info("[RESUME] Notifying orchestrator to resume execution: executionId={}", executionId);
+        log.info("[RESUME] Notificando al orquestador para reanudar la ejecución: executionId={}", executionId);
         boolean resumed = orchestratorClient.resumeFlow(executionId.toString(), userInput);
         if (resumed) {
-            log.info("[RESUME] Orchestrator resumed execution: executionId={}", executionId);
+            log.info("[RESUME] El orquestador reanudó la ejecución: executionId={}", executionId);
         } else {
-            log.warn("[RESUME] No paused state found, fallback restart required: executionId={}", executionId);
+            log.warn("[RESUME] No se encontró estado pausado; se requiere reinicio de respaldo: executionId={}", executionId);
         }
         return resumed;
     }
@@ -83,7 +83,7 @@ public class FlowInvocationService {
      * Reinicia el flujo desde el principio cuando el Orchestrator perdió el estado.
      */
     public void restartFlow(UUID executionId) {
-        log.info("[RESTART] Starting fallback restart for execution: executionId={}", executionId);
+        log.info("[RESTART] Iniciando reinicio de respaldo para la ejecución: executionId={}", executionId);
         ProcessExecutionRequest request = processService.getExecutionRequest(executionId);
         processService.updateExecutionStatus(executionId,
                 ProcessExecutionStatusRequest.of(ProcessExecutionStatus.IN_PROGRESS));
@@ -94,10 +94,10 @@ public class FlowInvocationService {
      * Notifica al Orchestrator que reintente un paso específico.
      */
     public void retryStep(UUID executionId, int stepOrder) {
-        log.info("[RETRY-STEP] Notifying orchestrator to retry step: executionId={}, stepOrder={}",
+        log.info("[RETRY-STEP] Notificando al orquestador para reintentar el paso: executionId={}, stepOrder={}",
                 executionId, stepOrder);
         orchestratorClient.retryStep(executionId.toString(), stepOrder);
-        log.info("[RETRY-STEP] Orchestrator acknowledged step retry: executionId={}, stepOrder={}",
+        log.info("[RETRY-STEP] El orquestador confirmó el reintento del paso: executionId={}, stepOrder={}",
                 executionId, stepOrder);
     }
 
@@ -109,10 +109,10 @@ public class FlowInvocationService {
                 request.vehicleId(),
                 request.salesAgentId());
 
-        log.info("[FLOW] Invoking orchestrator: executionId={}, flowId={}, customerId={}",
+        log.info("[FLOW] Invocando al orquestador: executionId={}, flowId={}, customerId={}",
                 executionId, flowName, request.customerId());
         orchestratorClient.startFlow(command).subscribe(
-                ignored -> log.info("[FLOW] Orchestrator finished execution: executionId={}", executionId),
+                ignored -> log.info("[FLOW] El orquestador terminó la ejecución: executionId={}", executionId),
                 error -> handleStartFailure(executionId, error));
     }
 
@@ -122,17 +122,17 @@ public class FlowInvocationService {
                     .map(ProcessTemplateEntity::getName)
                     .orElse(DEFAULT_FLOW_NAME);
         } catch (IllegalArgumentException ex) {
-            log.warn("[FLOW] Invalid processTemplateId, using default flow: {}", processTemplateId);
+            log.warn("[FLOW] processTemplateId inválido; se usa el flujo predeterminado: {}", processTemplateId);
             return DEFAULT_FLOW_NAME;
         }
     }
 
     private void handleStartFailure(UUID executionId, Throwable error) {
-        log.error("[FLOW] Orchestrator failed to start execution: executionId={}", executionId, error);
+        log.error("[FLOW] El orquestador no pudo iniciar la ejecución: executionId={}", executionId, error);
         ProcessExecutionStatusRequest request = new ProcessExecutionStatusRequest(
                 ProcessExecutionStatus.FAILED,
                 null,
-                "Orchestrator invocation failed: " + error.getMessage(),
+                "Falló la invocación del orquestador: " + error.getMessage(),
                 "No pudimos iniciar tu proceso",
                 "Ocurrió un problema al comunicarnos con el servicio de orquestación. Vuelve a intentarlo en unos segundos.",
                 "Reintentar inicio",
@@ -140,7 +140,7 @@ public class FlowInvocationService {
         try {
             processService.updateExecutionStatus(executionId, request);
         } catch (Exception ex) {
-            log.error("[FLOW] Could not persist start failure: executionId={}", executionId, ex);
+            log.error("[FLOW] No se pudo persistir el fallo de inicio: executionId={}", executionId, ex);
         }
     }
 }

@@ -9,7 +9,7 @@ public class OrchestratorUnavailableException extends AppException {
         super(HttpStatus.BAD_GATEWAY,
                 FlowCode.ORCHESTRATOR_UNAVAILABLE,
                 "No pudimos comunicarnos con el servicio de orquestación. Intenta nuevamente en unos segundos.",
-                "Orchestrator call failed during " + operation,
+                "Falló la llamada al orquestador durante: " + operation,
                 cause);
     }
 }

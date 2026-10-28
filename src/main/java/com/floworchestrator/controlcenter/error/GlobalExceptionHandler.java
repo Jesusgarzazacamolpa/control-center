@@ -14,6 +14,7 @@ import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.context.request.async.AsyncRequestNotUsableException;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
 
@@ -123,6 +124,16 @@ public class GlobalExceptionHandler {
         return respond(HttpStatus.NOT_FOUND, FlowCode.RESOURCE_NOT_FOUND,
                 "El recurso solicitado no existe. Verifica la ruta e intenta nuevamente.",
                 null, request);
+    }
+
+    /**
+     * El cliente cerró la conexión SSE (recarga, navegación, timeout del proxy).
+     * No es un error del servidor y la respuesta ya no es utilizable.
+     */
+    @ExceptionHandler(AsyncRequestNotUsableException.class)
+    public void handleClientDisconnect(AsyncRequestNotUsableException ex, HttpServletRequest request) {
+        log.debug("[SSE] El cliente cerró la conexión: path={}, error={}",
+                request != null ? request.getRequestURI() : "unknown", ex.getMessage());
     }
 
     @ExceptionHandler(Exception.class)

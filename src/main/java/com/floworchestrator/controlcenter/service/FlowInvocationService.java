@@ -91,13 +91,21 @@ public class FlowInvocationService {
     }
 
     /**
-     * Notifica al Orchestrator que reintente un paso específico.
+     * Marca el paso para reintento y reanuda el flujo: marcar el paso sin
+     * reanudar dejaba al usuario con la sensación de que no ocurría nada.
      */
     public void retryStep(UUID executionId, int stepOrder) {
         log.info("[RETRY-STEP] Notificando al orquestador para reintentar el paso: executionId={}, stepOrder={}",
                 executionId, stepOrder);
         orchestratorClient.retryStep(executionId.toString(), stepOrder);
-        log.info("[RETRY-STEP] El orquestador confirmó el reintento del paso: executionId={}, stepOrder={}",
+        flowEventSseConsumer.reRegisterExecution(executionId.toString());
+
+        if (!resumeFlow(executionId, null)) {
+            log.warn("[RETRY-STEP] El paso quedó marcado pero no hay estado para reanudar: "
+                    + "executionId={}, stepOrder={}", executionId, stepOrder);
+            return;
+        }
+        log.info("[RETRY-STEP] Paso marcado y flujo reanudado: executionId={}, stepOrder={}",
                 executionId, stepOrder);
     }
 

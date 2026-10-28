@@ -213,11 +213,26 @@ class FlowInvocationServiceTest {
     }
 
     @Test
-    @DisplayName("retryStep should delegate to the orchestrator")
+    @DisplayName("retryStep should mark the step and resume the flow")
     void retryStepDelegatesToOrchestrator() {
+        when(orchestratorClient.resumeFlow(EXECUTION_ID.toString(), null)).thenReturn(true);
+
         service.retryStep(EXECUTION_ID, 2);
 
         verify(orchestratorClient).retryStep(EXECUTION_ID.toString(), 2);
+        verify(flowEventSseConsumer).reRegisterExecution(EXECUTION_ID.toString());
+        verify(orchestratorClient).resumeFlow(EXECUTION_ID.toString(), null);
+    }
+
+    @Test
+    @DisplayName("retryStep should not resume when the orchestrator no longer has state")
+    void retryStepSkipsResumeWithoutState() {
+        when(orchestratorClient.resumeFlow(EXECUTION_ID.toString(), null)).thenReturn(false);
+
+        service.retryStep(EXECUTION_ID, 2);
+
+        verify(orchestratorClient).retryStep(EXECUTION_ID.toString(), 2);
+        verify(orchestratorClient).resumeFlow(EXECUTION_ID.toString(), null);
     }
 
     @Test

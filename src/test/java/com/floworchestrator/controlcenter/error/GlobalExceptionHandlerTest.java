@@ -9,6 +9,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.web.HttpMediaTypeNotSupportedException;
 import org.springframework.web.HttpRequestMethodNotSupportedException;
+import org.springframework.web.context.request.async.AsyncRequestNotUsableException;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 import java.util.UUID;
@@ -52,6 +53,14 @@ class GlobalExceptionHandlerTest {
         assertNotNull(body);
         assertEquals(FlowCode.PROCESS_NOT_FOUND, body.flowCode());
         assertTrue(body.message().contains("No encontramos el proceso"));
+    }
+
+    @Test
+    @DisplayName("should treat an SSE client disconnect as a non-error")
+    void shouldIgnoreClientDisconnect() {
+        handler.handleClientDisconnect(
+                new AsyncRequestNotUsableException("ServletOutputStream failed to flush"),
+                new MockHttpServletRequest("GET", "/api/processes/events"));
     }
 
     @Test

@@ -9,6 +9,10 @@ import lombok.NoArgsConstructor;
 
 import java.util.UUID;
 
+/**
+ * Plantilla de proceso (tabla {@code process_template}) que el Orchestrator usa
+ * como definición del flujo; solo las activas pueden iniciar ejecuciones.
+ */
 @Entity
 @Table(name = "process_template")
 @Data

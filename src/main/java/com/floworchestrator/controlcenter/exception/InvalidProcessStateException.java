@@ -6,6 +6,10 @@ import org.springframework.http.HttpStatus;
 
 import java.util.UUID;
 
+/**
+ * Se lanza al intentar reintentar una ejecución cuyo estatus no es reanudable;
+ * responde 409 para que la UI refresque el estado.
+ */
 public class InvalidProcessStateException extends AppException {
 
     public InvalidProcessStateException(UUID executionId, ProcessExecutionStatus currentStatus) {

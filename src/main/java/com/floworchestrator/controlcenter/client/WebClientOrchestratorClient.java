@@ -63,6 +63,10 @@ public class WebClientOrchestratorClient implements OrchestratorClient {
                 .bodyToFlux(FlowExecutionEvent.class);
     }
 
+    /**
+     * Reanuda la ejecución con un timeout de 30 s; un 404 del Orchestrator se
+     * traduce a {@code false} para que el llamador decida reiniciar el flujo.
+     */
     @Override
     public boolean resumeFlow(String executionId, String userInput) {
         try {
@@ -81,6 +85,10 @@ public class WebClientOrchestratorClient implements OrchestratorClient {
         }
     }
 
+    /**
+     * Marca el paso para reintento; cualquier fallo de comunicación se propaga
+     * como {@link OrchestratorUnavailableException}.
+     */
     @Override
     public void retryStep(String executionId, int stepOrder) {
         try {
@@ -93,6 +101,28 @@ public class WebClientOrchestratorClient implements OrchestratorClient {
         } catch (WebClientException | IllegalStateException ex) {
             throw new OrchestratorUnavailableException(
                     "reintentar el paso " + stepOrder + " de la ejecución " + executionId, ex);
+        }
+    }
+
+    /**
+     * Cancela la ejecución en el Orchestrator; un 404 se traduce a {@code false}
+     * porque no hay estado que descartar.
+     */
+    @Override
+    public boolean cancelFlow(String executionId) {
+        try {
+            webClient.post()
+                    .uri("/api/flows/{executionId}/cancel", executionId)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .retrieve()
+                    .toBodilessEntity()
+                    .block(REQUEST_TIMEOUT);
+            return true;
+        } catch (WebClientResponseException.NotFound ex) {
+            log.warn("[ORCHESTRATOR] No se encontró estado cancelable para la ejecución: executionId={}", executionId);
+            return false;
+        } catch (WebClientException | IllegalStateException ex) {
+            throw new OrchestratorUnavailableException("cancelar el flujo " + executionId, ex);
         }
     }
 

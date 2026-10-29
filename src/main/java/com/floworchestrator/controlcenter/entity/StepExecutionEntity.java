@@ -17,6 +17,10 @@ import org.hibernate.type.SqlTypes;
 import java.time.OffsetDateTime;
 import java.util.UUID;
 
+/**
+ * Estado de un paso dentro de una ejecución (tabla {@code step_execution}).
+ * Registra estatus, reintentos y los mensajes de error del paso.
+ */
 @Entity
 @Table(name = "step_execution")
 @Data

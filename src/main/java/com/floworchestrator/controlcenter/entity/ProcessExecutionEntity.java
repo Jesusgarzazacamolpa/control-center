@@ -18,6 +18,11 @@ import org.hibernate.annotations.ColumnTransformer;
 import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.type.SqlTypes;
 
+/**
+ * Ejecución de una plantilla de proceso (tabla {@code process_execution}).
+ * Es la fuente de verdad del estatus, el paso actual y el contexto del cliente;
+ * {@code globalContext} se persiste como jsonb.
+ */
 @Entity
 @Table(name = "process_execution")
 @Data

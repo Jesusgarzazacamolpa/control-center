@@ -2,6 +2,7 @@ package com.floworchestrator.controlcenter.model;
 
 /**
  * Datos para registrar una intervención humana.
+ * Un {@code stepOrder} nulo se persiste como 0.
  */
 public record CreateInterventionRequest(
         String stepName,

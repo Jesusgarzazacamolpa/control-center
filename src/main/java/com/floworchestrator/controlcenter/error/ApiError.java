@@ -19,6 +19,9 @@ public record ApiError(
         List<FieldViolation> details
 ) {
 
+    /**
+     * Violación de validación de un campo concreto del cuerpo de la petición.
+     */
     public record FieldViolation(String field, String message) {
     }
 }

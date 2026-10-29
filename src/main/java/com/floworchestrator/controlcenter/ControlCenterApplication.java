@@ -6,6 +6,10 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.web.servlet.config.annotation.CorsRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 
+/**
+ * Punto de entrada del servicio Control Center (Spring Boot + PostgreSQL).
+ * Arranca la aplicación y habilita CORS para el frontend local.
+ */
 @SpringBootApplication
 public class ControlCenterApplication {
 
@@ -13,6 +17,9 @@ public class ControlCenterApplication {
         SpringApplication.run(ControlCenterApplication.class, args);
     }
 
+    /**
+     * Permite peticiones del frontend en {@code http://localhost:4200} con credenciales.
+     */
     @Bean
     public WebMvcConfigurer corsConfigurer() {
         return new WebMvcConfigurer() {

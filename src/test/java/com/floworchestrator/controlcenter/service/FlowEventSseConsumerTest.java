@@ -4,6 +4,7 @@ import com.floworchestrator.controlcenter.client.OrchestratorClient;
 import com.floworchestrator.controlcenter.enums.ProcessExecutionStatus;
 import com.floworchestrator.controlcenter.enums.StepExecutionStatus;
 import com.floworchestrator.controlcenter.model.FlowExecutionEvent;
+import com.floworchestrator.controlcenter.model.ProcessExecutionResponse;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -15,6 +16,7 @@ import org.slf4j.MDC;
 import reactor.core.publisher.Flux;
 
 import java.time.OffsetDateTime;
+import java.util.List;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -168,6 +170,37 @@ class FlowEventSseConsumerTest {
     }
 
     @Test
+    @DisplayName("should mark the execution as cancelled on FLOW_CANCELLED and stop tracking it")
+    void flowCancelledMarksExecutionCancelled() {
+        consumer.trackExecution(EXECUTION_ID.toString());
+        when(processService.getExecution(EXECUTION_ID))
+                .thenReturn(response(ProcessExecutionStatus.PAUSED_FOR_HUMAN));
+        when(orchestratorClient.streamEvents()).thenReturn(
+                Flux.just(event("FLOW_CANCELLED", 1), event("STEP_STARTED", 1)));
+
+        consumer.ensureStarted();
+
+        verify(processService).updateExecutionStatus(eq(EXECUTION_ID), argThat(request ->
+                request.status() == ProcessExecutionStatus.CANCELLED
+                        && "Validar RFC".equals(request.currentStep())
+                        && "No pudimos validar tu RFC".equals(request.userErrorTitle())));
+        verify(processService, never()).updateStepExecution(any(), anyInt(), any());
+    }
+
+    @Test
+    @DisplayName("should keep the previous cancellation details on FLOW_CANCELLED")
+    void flowCancelledKeepsPreviousCancellation() {
+        consumer.trackExecution(EXECUTION_ID.toString());
+        when(processService.getExecution(EXECUTION_ID))
+                .thenReturn(response(ProcessExecutionStatus.CANCELLED));
+        when(orchestratorClient.streamEvents()).thenReturn(Flux.just(event("FLOW_CANCELLED", 1)));
+
+        consumer.ensureStarted();
+
+        verify(processService, never()).updateExecutionStatus(any(), any());
+    }
+
+    @Test
     @DisplayName("should resume the execution on FLOW_RESUMED")
     void flowResumedResumesExecution() {
         consumer.trackExecution(EXECUTION_ID.toString());
@@ -179,14 +212,18 @@ class FlowEventSseConsumerTest {
     }
 
     @Test
-    @DisplayName("should not touch the database on FLOW_PAUSED")
-    void flowPausedOnlyLogs() {
+    @DisplayName("should mark the execution as paused on FLOW_PAUSED")
+    void flowPausedMarksExecutionAsPaused() {
         consumer.trackExecution(EXECUTION_ID.toString());
         when(orchestratorClient.streamEvents()).thenReturn(Flux.just(event("FLOW_PAUSED", 1)));
 
         consumer.ensureStarted();
 
-        verifyNoInteractions(processService);
+        verify(processService).updateExecutionStatus(eq(EXECUTION_ID), argThat(request ->
+                request.status() == ProcessExecutionStatus.PAUSED_FOR_HUMAN
+                        && "Validar RFC".equals(request.currentStep())
+                        && "No pudimos validar tu RFC".equals(request.userErrorTitle())));
+        verify(processService, never()).updateStepExecution(any(), anyInt(), any());
     }
 
     @Test
@@ -269,5 +306,10 @@ class FlowEventSseConsumerTest {
                 "warning",
                 "orch-trace-1",
                 OffsetDateTime.now());
+    }
+
+    private ProcessExecutionResponse response(ProcessExecutionStatus status) {
+        return new ProcessExecutionResponse(EXECUTION_ID.toString(), "template-1", "customer-1",
+                status, "Validar RFC", null, null, null, null, null, "trace-1", List.of("Validar RFC"));
     }
 }

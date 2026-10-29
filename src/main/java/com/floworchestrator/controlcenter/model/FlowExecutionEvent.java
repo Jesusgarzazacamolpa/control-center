@@ -6,6 +6,8 @@ import java.time.OffsetDateTime;
 
 /**
  * DTO que representa un evento de ejecución de flujo recibido vía SSE desde el Orchestrator.
+ * {@code eventType} determina el cambio de estado aplicado (STEP_*, FLOW_*); los campos
+ * desconocidos del emisor se ignoran.
  */
 @JsonIgnoreProperties(ignoreUnknown = true)
 public record FlowExecutionEvent(

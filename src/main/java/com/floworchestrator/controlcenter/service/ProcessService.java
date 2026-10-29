@@ -18,6 +18,7 @@ import com.floworchestrator.controlcenter.exception.ProcessTemplateNotFoundExcep
 import com.floworchestrator.controlcenter.exception.StepNotFoundException;
 import com.floworchestrator.controlcenter.model.CreateInterventionRequest;
 import com.floworchestrator.controlcenter.model.InterventionResponse;
+import com.floworchestrator.controlcenter.model.ProcessExecutionPage;
 import com.floworchestrator.controlcenter.model.ProcessExecutionRequest;
 import com.floworchestrator.controlcenter.model.ProcessExecutionResponse;
 import com.floworchestrator.controlcenter.model.ProcessExecutionStatusRequest;
@@ -32,6 +33,9 @@ import com.floworchestrator.controlcenter.repository.StepTemplateRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.slf4j.MDC;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -40,10 +44,16 @@ import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
+/**
+ * Servicio central del Control Center: persiste ejecuciones, pasos e
+ * intervenciones y aplica las transiciones de estado derivadas de la API y de
+ * los eventos SSE, dentro de transacciones.
+ */
 @Service
 @RequiredArgsConstructor
 @Slf4j
@@ -59,11 +69,19 @@ public class ProcessService {
     private final InterventionRepository interventionRepository;
     private final ObjectMapper objectMapper;
 
+    /**
+     * Devuelve el id de la plantilla activa "Compra de vehiculo", la usada por defecto.
+     */
     @Transactional(readOnly = true)
     public String getDefaultProcessTemplateId() {
         return getActiveProcessTemplateId(DEFAULT_TEMPLATE_NAME);
     }
 
+    /**
+     * Devuelve el id de la primera plantilla activa con ese nombre.
+     *
+     * @throws ProcessTemplateNotFoundException si no existe ninguna activa con ese nombre.
+     */
     @Transactional(readOnly = true)
     public String getActiveProcessTemplateId(String name) {
         return processTemplateRepository.findFirstByNameAndActiveTrue(name)
@@ -73,6 +91,7 @@ public class ProcessService {
 
     /**
      * Crea una nueva ejecución de flujo en estado PENDING con el contexto del cliente.
+     * Solo persiste; no invoca al Orchestrator.
      */
     @Transactional
     public ProcessExecutionResponse createExecution(ProcessExecutionRequest request) {
@@ -88,6 +107,10 @@ public class ProcessService {
         return toResponse(repository.save(entity));
     }
 
+    /**
+     * Sobrescribe estatus y mensajes de error del proceso, y fija {@code completedAt}
+     * cuando el estatus es terminal (en otro caso lo limpia).
+     */
     @Transactional
     public ProcessExecutionResponse updateExecutionStatus(UUID executionId,
                                                           ProcessExecutionStatusRequest request) {
@@ -106,6 +129,12 @@ public class ProcessService {
         return toResponse(repository.save(entity));
     }
 
+    /**
+     * Actualiza el paso (lo crea si es su primera ejecución) y sincroniza el estado
+     * del proceso mediante las transiciones de {@code applyStepStatus}.
+     *
+     * @throws StepNotFoundException si la plantilla no define ese número de paso.
+     */
     @Transactional
     public ProcessExecutionStepResponse updateStepExecution(UUID executionId, int stepOrder,
                                                             StepExecutionStatusRequest request) {
@@ -122,10 +151,8 @@ public class ProcessService {
 
         step.setStatus(request.status());
         step.setErrorMessage(request.errorMessage());
-        process.setUserErrorTitle(request.userErrorTitle());
-        process.setUserErrorMessage(request.userErrorMessage());
-        process.setUserErrorActionLabel(request.userErrorActionLabel());
-        process.setUserErrorStatusType(request.userErrorStatusType());
+        // Los mensajes de usuario del paso viven en el paso: copiarlos al proceso
+        // hacía que una intervención mostrara "Error inesperado" en toda la pantalla.
         applyTraceId(process);
         process.setLastUpdatedAt(now);
 
@@ -134,18 +161,51 @@ public class ProcessService {
         return toStepResponse(saved, template);
     }
 
+    /**
+     * Lista una página de ejecuciones ordenada por fecha de inicio descendente,
+     * resolviendo los nombres de pasos en una sola consulta por lote.
+     */
     @Transactional(readOnly = true)
-    public List<ProcessExecutionResponse> listExecutions() {
-        return repository.findAll().stream()
-                .map(this::toResponse)
+    public ProcessExecutionPage listExecutions(int page, int size) {
+        Page<ProcessExecutionEntity> executions = repository.findAll(
+                PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "startedAt")));
+        Map<UUID, List<String>> stepsByTemplate = stepNamesByTemplate(executions.getContent());
+        List<ProcessExecutionResponse> content = executions.getContent().stream()
+                .map(entity -> toResponse(entity, stepsByTemplate.getOrDefault(
+                        entity.getProcessTemplateId(), List.of())))
                 .toList();
+        return new ProcessExecutionPage(content, executions.getNumber(), executions.getSize(),
+                executions.getTotalElements(), executions.getTotalPages());
     }
 
+    /**
+     * Agrupa por plantilla los nombres de pasos de las ejecuciones de la página,
+     * evitando una consulta por fila.
+     */
+    private Map<UUID, List<String>> stepNamesByTemplate(List<ProcessExecutionEntity> executions) {
+        Set<UUID> templateIds = executions.stream()
+                .map(ProcessExecutionEntity::getProcessTemplateId)
+                .collect(Collectors.toSet());
+        if (templateIds.isEmpty()) {
+            return Map.of();
+        }
+        return stepTemplateRepository.findAllByProcessTemplateIdInOrderByStepOrderAsc(templateIds).stream()
+                .collect(Collectors.groupingBy(StepTemplateEntity::getProcessTemplateId,
+                        Collectors.mapping(StepTemplateEntity::getName, Collectors.toList())));
+    }
+
+    /**
+     * Devuelve la ejecución con los nombres de pasos de su plantilla.
+     */
     @Transactional(readOnly = true)
     public ProcessExecutionResponse getExecution(UUID executionId) {
         return toResponse(getExecutionEntity(executionId));
     }
 
+    /**
+     * Reconstruye la solicitud original (plantilla, cliente, vehículo y agente)
+     * para poder reiniciar el flujo desde el principio.
+     */
     @Transactional(readOnly = true)
     public ProcessExecutionRequest getExecutionRequest(UUID executionId) {
         ProcessExecutionEntity entity = getExecutionEntity(executionId);
@@ -156,6 +216,10 @@ public class ProcessService {
                 entity.getSalesAgentId());
     }
 
+    /**
+     * Lista los pasos ejecutados de un proceso en orden de inicio, con nombre y
+     * orden tomados de la plantilla.
+     */
     @Transactional(readOnly = true)
     public List<ProcessExecutionStepResponse> getExecutionSteps(UUID executionId) {
         if (!repository.existsById(executionId)) {
@@ -172,6 +236,10 @@ public class ProcessService {
                 .toList();
     }
 
+    /**
+     * Registra una intervención en PENDING_REVIEW con los mensajes de error del paso
+     * y actualiza la última modificación del proceso.
+     */
     @Transactional
     public InterventionResponse createIntervention(UUID executionId, CreateInterventionRequest request) {
         ProcessExecutionEntity process = getExecutionEntity(executionId);
@@ -204,26 +272,57 @@ public class ProcessService {
         return toInterventionResponse(saved);
     }
 
+    /**
+     * Lista intervenciones filtrando opcionalmente por proceso y estatus
+     * (el estatus se interpreta sin distinguir mayúsculas).
+     */
     @Transactional(readOnly = true)
-    public List<InterventionResponse> listInterventions() {
-        return interventionRepository.findAll().stream()
+    public List<InterventionResponse> listInterventions(UUID processId, String rawStatus) {
+        InterventionStatus status = parseOptionalStatus(rawStatus);
+        return findInterventions(processId, status).stream()
                 .map(this::toInterventionResponse)
                 .toList();
     }
 
-    @Transactional(readOnly = true)
-    public List<InterventionResponse> listInterventionsByStatus(String rawStatus) {
-        InterventionStatus status = parseInterventionStatus(rawStatus.trim().toUpperCase(Locale.ROOT));
-        return interventionRepository.findByStatusOrderByCreatedAtDesc(status).stream()
-                .map(this::toInterventionResponse)
-                .toList();
+    /**
+     * Elige la consulta según los filtros presentes; sin filtros usa {@code findAll()},
+     * que no garantiza el orden por fecha.
+     */
+    private List<InterventionEntity> findInterventions(UUID processId, InterventionStatus status) {
+        if (processId != null && status != null) {
+            return interventionRepository
+                    .findByProcessExecutionIdAndStatusOrderByCreatedAtDesc(processId, status);
+        }
+        if (processId != null) {
+            return interventionRepository.findByProcessExecutionIdOrderByCreatedAtDesc(processId);
+        }
+        if (status != null) {
+            return interventionRepository.findByStatusOrderByCreatedAtDesc(status);
+        }
+        return interventionRepository.findAll();
     }
 
+    private InterventionStatus parseOptionalStatus(String rawStatus) {
+        if (rawStatus == null || rawStatus.isBlank()) {
+            return null;
+        }
+        return parseInterventionStatus(rawStatus.trim().toUpperCase(Locale.ROOT));
+    }
+
+    /**
+     * Devuelve una intervención por id.
+     *
+     * @throws InterventionNotFoundException si no existe.
+     */
     @Transactional(readOnly = true)
     public InterventionResponse getIntervention(UUID interventionId) {
         return toInterventionResponse(getInterventionEntity(interventionId));
     }
 
+    /**
+     * Actualiza estatus y/o notas de una intervención. Aprobar reanuda la ejecución
+     * como IN_PROGRESS; rechazar la deja CANCELLED con mensaje de error.
+     */
     @Transactional
     public InterventionResponse updateIntervention(UUID interventionId, UpdateInterventionRequest request) {
         InterventionEntity entity = getInterventionEntity(interventionId);
@@ -241,6 +340,9 @@ public class ProcessService {
         return toInterventionResponse(saved);
     }
 
+    /**
+     * Asigna la intervención a un responsable sin cambiar su estatus.
+     */
     @Transactional
     public InterventionResponse assignIntervention(UUID interventionId, String assignee) {
         InterventionEntity entity = getInterventionEntity(interventionId);
@@ -252,6 +354,11 @@ public class ProcessService {
         return toInterventionResponse(saved);
     }
 
+    /**
+     * Pasa a IN_PROGRESS una ejecución pausada o fallida y limpia los mensajes de
+     * error; si el estado no es reintentable lo omite en lugar de fallar. Lo usa el
+     * evento SSE {@code FLOW_RESUMED}.
+     */
     @Transactional
     public void resumeExecution(UUID executionId) {
         ProcessExecutionEntity process = getExecutionEntity(executionId);
@@ -262,17 +369,28 @@ public class ProcessService {
         }
         process.setStatus(ProcessExecutionStatus.IN_PROGRESS);
         process.setErrorMessage(null);
+        process.setUserErrorTitle(null);
+        process.setUserErrorMessage(null);
+        process.setUserErrorActionLabel(null);
+        process.setUserErrorStatusType(null);
         process.setCompletedAt(null);
         process.setLastUpdatedAt(OffsetDateTime.now(ZoneOffset.UTC));
         repository.save(process);
         log.info("[INTERVENTION] Ejecución reanudada mediante evento SSE: id={}", executionId);
     }
 
+    /**
+     * Aplica la transición del proceso según el nuevo estatus de la intervención:
+     * aprobar reanuda, rechazar cancela.
+     */
     private void applyInterventionStatus(InterventionEntity entity, String rawStatus) {
         InterventionStatus status = parseInterventionStatus(rawStatus.trim().toUpperCase(Locale.ROOT));
         entity.setStatus(status);
-        if (status == InterventionStatus.APPROVED) {
-            processExecutionAfterResume(entity.getProcessExecutionId(), entity.getStepName());
+        switch (status) {
+            case APPROVED -> processExecutionAfterResume(entity.getProcessExecutionId(), entity.getStepName());
+            case REJECTED -> processExecutionAfterRejection(entity.getProcessExecutionId(), entity.getStepName());
+            default -> {
+            }
         }
     }
 
@@ -284,14 +402,41 @@ public class ProcessService {
         }
     }
 
+    /**
+     * Deja la ejecución IN_PROGRESS en el paso intervenido y limpia los errores
+     * visibles al usuario.
+     */
     private void processExecutionAfterResume(UUID executionId, String currentStep) {
         ProcessExecutionEntity process = getExecutionEntity(executionId);
         process.setStatus(ProcessExecutionStatus.IN_PROGRESS);
         process.setCurrentStep(currentStep);
         process.setErrorMessage(null);
+        process.setUserErrorTitle(null);
+        process.setUserErrorMessage(null);
+        process.setUserErrorActionLabel(null);
+        process.setUserErrorStatusType(null);
         process.setLastUpdatedAt(OffsetDateTime.now(ZoneOffset.UTC));
         repository.save(process);
         log.info("[INTERVENTION] Ejecución del proceso reanudada: id={}", executionId);
+    }
+
+    /**
+     * Deja la ejecución CANCELLED con mensajes de rechazo listos para la UI.
+     */
+    private void processExecutionAfterRejection(UUID executionId, String currentStep) {
+        ProcessExecutionEntity process = getExecutionEntity(executionId);
+        OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
+        process.setStatus(ProcessExecutionStatus.CANCELLED);
+        process.setCurrentStep(currentStep);
+        process.setErrorMessage("El operador rechazó la intervención.");
+        process.setUserErrorTitle("Proceso cancelado");
+        process.setUserErrorMessage("La autorización fue rechazada, por lo que el proceso no puede continuar.");
+        process.setUserErrorActionLabel("Iniciar un nuevo proceso");
+        process.setUserErrorStatusType("error");
+        process.setCompletedAt(now);
+        process.setLastUpdatedAt(now);
+        repository.save(process);
+        log.info("[INTERVENTION] Ejecución del proceso cancelada por rechazo: id={}", executionId);
     }
 
     private ProcessExecutionEntity getExecutionEntity(UUID executionId) {
@@ -313,6 +458,10 @@ public class ProcessService {
         }
     }
 
+    /**
+     * Reglas de transición del proceso ante cada estatus de paso; el paso PENDING
+     * solo se registra en el log.
+     */
     private void applyStepStatus(ProcessExecutionEntity process, StepExecutionEntity step,
                                  StepTemplateEntity template, StepExecutionStatusRequest request,
                                  OffsetDateTime now) {
@@ -325,6 +474,10 @@ public class ProcessService {
         }
     }
 
+    /**
+     * Incrementa el contador de reintentos solo si el paso estaba FAILED y deja el
+     * proceso IN_PROGRESS en ese paso.
+     */
     private void applyRunningStatus(ProcessExecutionEntity process, StepExecutionEntity step,
                                     StepTemplateEntity template, OffsetDateTime now) {
         if (step.getStatus() == StepExecutionStatus.FAILED) {
@@ -336,9 +489,17 @@ public class ProcessService {
         process.setStatus(ProcessExecutionStatus.IN_PROGRESS);
         process.setCurrentStep(template.getName());
         process.setErrorMessage(null);
+        process.setUserErrorTitle(null);
+        process.setUserErrorMessage(null);
+        process.setUserErrorActionLabel(null);
+        process.setUserErrorStatusType(null);
         process.setCompletedAt(null);
     }
 
+    /**
+     * Completa el paso y limpia el paso actual, pero no marca el proceso COMPLETED:
+     * eso ocurre con el evento FLOW_COMPLETED.
+     */
     private void applyCompletedStatus(ProcessExecutionEntity process, StepExecutionEntity step,
                                       OffsetDateTime now) {
         step.setCompletedAt(now);
@@ -346,6 +507,9 @@ public class ProcessService {
         process.setErrorMessage(null);
     }
 
+    /**
+     * Marca paso y proceso como FAILED y fija la fecha de finalización de ambos.
+     */
     private void applyFailedStatus(ProcessExecutionEntity process, StepExecutionEntity step,
                                    StepTemplateEntity template, String errorMessage, OffsetDateTime now) {
         step.setCompletedAt(now);
@@ -355,6 +519,9 @@ public class ProcessService {
         process.setCompletedAt(now);
     }
 
+    /**
+     * Pausa el proceso para intervención humana en el paso indicado.
+     */
     private void applyInterventionStatus(ProcessExecutionEntity process, StepExecutionEntity step,
                                          StepTemplateEntity template, String errorMessage) {
         step.setCompletedAt(null);
@@ -412,6 +579,10 @@ public class ProcessService {
     }
 
     private ProcessExecutionResponse toResponse(ProcessExecutionEntity entity) {
+        return toResponse(entity, stepNames(entity.getProcessTemplateId()));
+    }
+
+    private ProcessExecutionResponse toResponse(ProcessExecutionEntity entity, List<String> steps) {
         return new ProcessExecutionResponse(
                 entity.getId().toString(),
                 entity.getProcessTemplateId().toString(),
@@ -424,7 +595,7 @@ public class ProcessService {
                 entity.getUserErrorActionLabel(),
                 entity.getUserErrorStatusType(),
                 entity.getTraceId(),
-                stepNames(entity.getProcessTemplateId()));
+                steps);
     }
 
     private List<String> stepNames(UUID processTemplateId) {
@@ -433,6 +604,10 @@ public class ProcessService {
                 .toList();
     }
 
+    /**
+     * Extrae {@code customerId} del jsonb; si el contenido no es válido devuelve
+     * {@code null} y solo deja un warning.
+     */
     private String extractCustomerId(ProcessExecutionEntity entity) {
         if (entity.getGlobalContext() == null || entity.getGlobalContext().isBlank()) {
             return null;

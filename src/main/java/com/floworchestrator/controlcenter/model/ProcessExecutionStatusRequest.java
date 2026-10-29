@@ -18,6 +18,9 @@ public record ProcessExecutionStatusRequest(
         String userErrorStatusType
 ) {
 
+    /**
+     * Atajo para cambiar solo el estatus y limpiar los mensajes de error.
+     */
     public static ProcessExecutionStatusRequest of(ProcessExecutionStatus status) {
         return new ProcessExecutionStatusRequest(status, null, null, null, null, null, null);
     }

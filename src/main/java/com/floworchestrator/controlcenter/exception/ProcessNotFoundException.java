@@ -5,6 +5,9 @@ import org.springframework.http.HttpStatus;
 
 import java.util.UUID;
 
+/**
+ * Se lanza cuando la ejecución de proceso solicitada no existe; responde 404.
+ */
 public class ProcessNotFoundException extends AppException {
 
     public ProcessNotFoundException(UUID executionId) {

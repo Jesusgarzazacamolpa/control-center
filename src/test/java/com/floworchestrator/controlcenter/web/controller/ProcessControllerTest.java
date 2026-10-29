@@ -7,6 +7,7 @@ import com.floworchestrator.controlcenter.error.FlowCode;
 import com.floworchestrator.controlcenter.exception.InvalidProcessStateException;
 import com.floworchestrator.controlcenter.exception.OrchestratorUnavailableException;
 import com.floworchestrator.controlcenter.exception.ProcessNotFoundException;
+import com.floworchestrator.controlcenter.model.ProcessExecutionPage;
 import com.floworchestrator.controlcenter.model.ProcessExecutionRequest;
 import com.floworchestrator.controlcenter.model.ProcessExecutionResponse;
 import com.floworchestrator.controlcenter.model.ProcessExecutionStatusRequest;
@@ -26,6 +27,7 @@ import java.util.List;
 import java.util.UUID;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -256,13 +258,46 @@ class ProcessControllerTest {
     }
 
     @Test
-    @DisplayName("GET /api/processes should return the execution list")
-    void listExecutionsReturnsList() throws Exception {
-        when(processService.listExecutions()).thenReturn(List.of(response(ProcessExecutionStatus.PENDING)));
+    @DisplayName("GET /api/processes should return the first page of executions")
+    void listExecutionsReturnsFirstPage() throws Exception {
+        when(processService.listExecutions(0, 10)).thenReturn(new ProcessExecutionPage(
+                List.of(response(ProcessExecutionStatus.PENDING)), 0, 10, 1, 1));
 
         mockMvc.perform(get("/api/processes"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$[0].id").value(EXECUTION_ID.toString()));
+                .andExpect(jsonPath("$.content[0].id").value(EXECUTION_ID.toString()))
+                .andExpect(jsonPath("$.page").value(0))
+                .andExpect(jsonPath("$.size").value(10))
+                .andExpect(jsonPath("$.totalElements").value(1))
+                .andExpect(jsonPath("$.totalPages").value(1));
+    }
+
+    @Test
+    @DisplayName("GET /api/processes should forward pagination parameters")
+    void listExecutionsForwardsPagination() throws Exception {
+        when(processService.listExecutions(2, 5))
+                .thenReturn(new ProcessExecutionPage(List.of(), 2, 5, 12, 3));
+
+        mockMvc.perform(get("/api/processes").param("page", "2").param("size", "5"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.page").value(2))
+                .andExpect(jsonPath("$.totalPages").value(3));
+
+        verify(processService).listExecutions(2, 5);
+    }
+
+    @Test
+    @DisplayName("GET /api/processes should reject out-of-range pagination")
+    void listExecutionsRejectsInvalidPagination() throws Exception {
+        mockMvc.perform(get("/api/processes").param("size", "0"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.flowCode").value(FlowCode.VALIDATION));
+
+        mockMvc.perform(get("/api/processes").param("page", "-1"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.flowCode").value(FlowCode.VALIDATION));
+
+        verify(processService, never()).listExecutions(anyInt(), anyInt());
     }
 
     @Test

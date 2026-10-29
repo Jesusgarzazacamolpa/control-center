@@ -5,6 +5,9 @@ import org.springframework.http.HttpStatus;
 
 import java.util.UUID;
 
+/**
+ * Se lanza cuando no existe la plantilla de un paso para la ejecución; responde 404.
+ */
 public class StepNotFoundException extends AppException {
 
     public StepNotFoundException(UUID processTemplateId, int stepOrder) {

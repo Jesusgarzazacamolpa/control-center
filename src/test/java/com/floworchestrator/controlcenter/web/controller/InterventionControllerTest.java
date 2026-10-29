@@ -52,7 +52,7 @@ class InterventionControllerTest {
     @Test
     @DisplayName("GET /api/interventions should list all interventions")
     void listInterventionsReturnsAll() throws Exception {
-        when(processService.listInterventions()).thenReturn(List.of(response()));
+        when(processService.listInterventions(null, null)).thenReturn(List.of(response()));
 
         mockMvc.perform(get("/api/interventions"))
                 .andExpect(status().isOk())
@@ -62,14 +62,52 @@ class InterventionControllerTest {
     @Test
     @DisplayName("GET /api/interventions?status=PENDING_REVIEW should filter pending interventions")
     void listInterventionsFiltersPendingReview() throws Exception {
-        when(processService.listInterventionsByStatus("PENDING_REVIEW"))
+        when(processService.listInterventions(null, "PENDING_REVIEW"))
                 .thenReturn(List.of(response(InterventionStatus.PENDING_REVIEW)));
 
         mockMvc.perform(get("/api/interventions").param("status", "PENDING_REVIEW"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$[0].status").value("PENDING_REVIEW"));
 
-        verify(processService).listInterventionsByStatus("PENDING_REVIEW");
+        verify(processService).listInterventions(null, "PENDING_REVIEW");
+    }
+
+    @Test
+    @DisplayName("GET /api/interventions?processId=... should filter by process")
+    void listInterventionsFiltersByProcess() throws Exception {
+        when(processService.listInterventions(EXECUTION_ID, null))
+                .thenReturn(List.of(response()));
+
+        mockMvc.perform(get("/api/interventions").param("processId", EXECUTION_ID.toString()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].processId").value(EXECUTION_ID.toString()));
+
+        verify(processService).listInterventions(EXECUTION_ID, null);
+    }
+
+    @Test
+    @DisplayName("GET /api/interventions should combine processId and status filters")
+    void listInterventionsCombinesProcessAndStatusFilters() throws Exception {
+        when(processService.listInterventions(EXECUTION_ID, "PENDING_REVIEW"))
+                .thenReturn(List.of(response(InterventionStatus.PENDING_REVIEW)));
+
+        mockMvc.perform(get("/api/interventions")
+                        .param("processId", EXECUTION_ID.toString())
+                        .param("status", "PENDING_REVIEW"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].status").value("PENDING_REVIEW"));
+
+        verify(processService).listInterventions(EXECUTION_ID, "PENDING_REVIEW");
+    }
+
+    @Test
+    @DisplayName("GET /api/interventions should reject malformed processId")
+    void listInterventionsRejectsInvalidProcessId() throws Exception {
+        mockMvc.perform(get("/api/interventions").param("processId", "not-a-uuid"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.flowCode").value(FlowCode.BAD_REQUEST));
+
+        verify(processService, never()).listInterventions(any(), any());
     }
 
     @Test
@@ -102,20 +140,51 @@ class InterventionControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("APPROVED"));
 
-        verify(flowInvocationService).resumeFlow(EXECUTION_ID, null);
+        verify(flowInvocationService).resumeOrRestartFlow(EXECUTION_ID, "APPROVED. Cliente proporcionó el RFC");
     }
 
     @Test
-    @DisplayName("PUT /api/interventions/{id} with REJECTED should not notify the orchestrator")
-    void updateInterventionRejectedDoesNotNotifyOrchestrator() throws Exception {
+    @DisplayName("PUT /api/interventions/{id} without notes should resume with the approval decision")
+    void updateInterventionApprovedWithoutNotesResumesWithDecision() throws Exception {
         when(processService.updateIntervention(eq(INTERVENTION_ID), any())).thenReturn(response());
 
         mockMvc.perform(put("/api/interventions/{id}", INTERVENTION_ID)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"status\":\"REJECTED\"}"))
+                        .content("{\"status\":\"APPROVED\"}"))
                 .andExpect(status().isOk());
 
-        verify(flowInvocationService, never()).resumeFlow(any(), any());
+        verify(flowInvocationService).resumeOrRestartFlow(EXECUTION_ID, "APPROVED");
+    }
+
+    @Test
+    @DisplayName("PUT /api/interventions/{id} with REJECTED should cancel the flow in the orchestrator")
+    void updateInterventionRejectedCancelsFlow() throws Exception {
+        when(processService.updateIntervention(eq(INTERVENTION_ID), any()))
+                .thenReturn(response(InterventionStatus.REJECTED));
+
+        mockMvc.perform(put("/api/interventions/{id}", INTERVENTION_ID)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"status\":\"REJECTED\",\"notes\":\"Datos fiscales inválidos\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("REJECTED"));
+
+        verify(flowInvocationService).cancelFlow(EXECUTION_ID);
+        verify(flowInvocationService, never()).resumeOrRestartFlow(any(), any());
+    }
+
+    @Test
+    @DisplayName("PUT /api/interventions/{id} without status should not notify the orchestrator")
+    void updateInterventionWithoutStatusDoesNotNotifyOrchestrator() throws Exception {
+        when(processService.updateIntervention(eq(INTERVENTION_ID), any()))
+                .thenReturn(response(InterventionStatus.PENDING_REVIEW));
+
+        mockMvc.perform(put("/api/interventions/{id}", INTERVENTION_ID)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"notes\":\"Pendiente de revisión\"}"))
+                .andExpect(status().isOk());
+
+        verify(flowInvocationService, never()).resumeOrRestartFlow(any(), any());
+        verify(flowInvocationService, never()).cancelFlow(any());
     }
 
     @Test

@@ -9,6 +9,10 @@ import lombok.NoArgsConstructor;
 
 import java.util.UUID;
 
+/**
+ * Definición de un paso de la plantilla (tabla {@code step_template}).
+ * El {@code stepOrder} identifica el paso dentro del proceso.
+ */
 @Entity
 @Table(name = "step_template")
 @Data

@@ -3,6 +3,10 @@ package com.floworchestrator.controlcenter.exception;
 import com.floworchestrator.controlcenter.error.FlowCode;
 import org.springframework.http.HttpStatus;
 
+/**
+ * Se lanza cuando el estatus de intervención recibido no es APPROVED ni REJECTED;
+ * responde 400.
+ */
 public class InvalidInterventionStatusException extends AppException {
 
     public InvalidInterventionStatusException(String status) {

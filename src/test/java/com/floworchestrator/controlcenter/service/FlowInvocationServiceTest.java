@@ -179,6 +179,36 @@ class FlowInvocationServiceTest {
     }
 
     @Test
+    @DisplayName("resumeOrRestartFlow should resume without restarting when the orchestrator keeps the state")
+    void resumeOrRestartFlowResumesWithoutRestart() {
+        when(orchestratorClient.resumeFlow(EXECUTION_ID.toString(), "APPROVED")).thenReturn(true);
+
+        assertTrue(service.resumeOrRestartFlow(EXECUTION_ID, "APPROVED"));
+
+        verify(flowEventSseConsumer).reRegisterExecution(EXECUTION_ID.toString());
+        verify(processService, never()).getExecutionRequest(any());
+        verify(orchestratorClient, never()).startFlow(any());
+    }
+
+    @Test
+    @DisplayName("resumeOrRestartFlow should restart when the orchestrator lost the paused state")
+    void resumeOrRestartFlowRestartsWithoutState() {
+        ProcessExecutionRequest request = request(TEMPLATE_ID.toString());
+        when(orchestratorClient.resumeFlow(EXECUTION_ID.toString(), "APPROVED")).thenReturn(false);
+        when(processService.getExecutionRequest(EXECUTION_ID)).thenReturn(request);
+        when(processTemplateRepository.findById(TEMPLATE_ID)).thenReturn(Optional.of(template()));
+        when(orchestratorClient.startFlow(any())).thenReturn(Mono.empty());
+
+        assertFalse(service.resumeOrRestartFlow(EXECUTION_ID, "APPROVED"));
+
+        verify(flowEventSseConsumer).reRegisterExecution(EXECUTION_ID.toString());
+        verify(processService).updateExecutionStatus(eq(EXECUTION_ID), argThat(status ->
+                status.status() == ProcessExecutionStatus.IN_PROGRESS));
+        verify(orchestratorClient).startFlow(argThat(command ->
+                EXECUTION_ID.toString().equals(command.executionId())));
+    }
+
+    @Test
     @DisplayName("restartFlow should mark the execution in progress and start it again")
     void restartFlowStartsExecutionAgain() {
         ProcessExecutionRequest request = request(TEMPLATE_ID.toString());
@@ -210,6 +240,32 @@ class FlowInvocationServiceTest {
         List<ProcessExecutionStatusRequest> requests = captor.getAllValues();
         assertEquals(ProcessExecutionStatus.IN_PROGRESS, requests.get(0).status());
         assertEquals(ProcessExecutionStatus.FAILED, requests.get(1).status());
+    }
+
+    @Test
+    @DisplayName("cancelFlow should ask the orchestrator to discard the stored state")
+    void cancelFlowDelegatesToOrchestrator() {
+        when(orchestratorClient.cancelFlow(EXECUTION_ID.toString())).thenReturn(true);
+
+        assertTrue(service.cancelFlow(EXECUTION_ID));
+        verify(orchestratorClient).cancelFlow(EXECUTION_ID.toString());
+    }
+
+    @Test
+    @DisplayName("cancelFlow should return false when there is nothing to cancel")
+    void cancelFlowReturnsFalseWithoutState() {
+        when(orchestratorClient.cancelFlow(EXECUTION_ID.toString())).thenReturn(false);
+
+        assertFalse(service.cancelFlow(EXECUTION_ID));
+    }
+
+    @Test
+    @DisplayName("cancelFlow should propagate orchestrator failures")
+    void cancelFlowPropagatesFailures() {
+        when(orchestratorClient.cancelFlow(EXECUTION_ID.toString()))
+                .thenThrow(new OrchestratorUnavailableException("cancel", new RuntimeException("down")));
+
+        assertThrows(OrchestratorUnavailableException.class, () -> service.cancelFlow(EXECUTION_ID));
     }
 
     @Test

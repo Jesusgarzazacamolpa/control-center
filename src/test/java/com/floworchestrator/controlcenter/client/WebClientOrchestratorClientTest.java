@@ -172,6 +172,34 @@ class WebClientOrchestratorClientTest {
     }
 
     @Test
+    @DisplayName("cancelFlow should POST the cancel endpoint")
+    void cancelFlowPostsCancelEndpoint() {
+        stub(request -> okEmpty());
+
+        assertTrue(client.cancelFlow("exec-1"));
+
+        ClientRequest request = captured.get();
+        assertEquals("POST", request.method().name());
+        assertEquals("http://orchestrator.test/api/flows/exec-1/cancel", request.url().toString());
+    }
+
+    @Test
+    @DisplayName("cancelFlow should return false when the orchestrator has no stored state")
+    void cancelFlowReturnsFalseOnNotFound() {
+        stub(request -> Mono.just(ClientResponse.create(HttpStatus.NOT_FOUND).build()));
+
+        assertFalse(client.cancelFlow("exec-1"));
+    }
+
+    @Test
+    @DisplayName("cancelFlow should map connectivity errors to OrchestratorUnavailableException")
+    void cancelFlowMapsErrors() {
+        stub(request -> Mono.error(new IllegalStateException("connection refused")));
+
+        assertThrows(OrchestratorUnavailableException.class, () -> client.cancelFlow("exec-1"));
+    }
+
+    @Test
     @DisplayName("retryStep should POST the retry endpoint for the given step order")
     void retryStepPostsStepOrder() {
         stub(request -> okEmpty());

@@ -3,6 +3,10 @@ package com.floworchestrator.controlcenter.exception;
 import com.floworchestrator.controlcenter.error.FlowCode;
 import org.springframework.http.HttpStatus;
 
+/**
+ * Se lanza cuando no hay una plantilla de proceso activa con el nombre solicitado;
+ * responde 404.
+ */
 public class ProcessTemplateNotFoundException extends AppException {
 
     public ProcessTemplateNotFoundException(String templateName) {

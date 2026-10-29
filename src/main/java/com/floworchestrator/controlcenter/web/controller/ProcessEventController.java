@@ -14,7 +14,8 @@ import reactor.core.publisher.Flux;
 import java.util.UUID;
 
 /**
- * Endpoint SSE que expone los eventos de ejecución recibidos del Orchestrator.
+ * Endpoints SSE bajo el prefijo {@code /api/processes} que retransmiten los
+ * eventos de ejecución recibidos del Orchestrator.
  * <p>
  * El endpoint {@code /events} retransmite todos los eventos en tiempo real.
  * El endpoint {@code /{id}/events} filtra por una ejecución específica,
@@ -27,11 +28,18 @@ public class ProcessEventController {
 
     private final FlowEventSseConsumer flowEventSseConsumer;
 
+    /**
+     * GET /api/processes/events emite por SSE todos los eventos procesados.
+     */
     @GetMapping(value = "/events", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public Flux<ServerSentEvent<FlowExecutionEvent>> streamEvents() {
         return flowEventSseConsumer.stream().map(this::toServerSentEvent);
     }
 
+    /**
+     * GET /api/processes/{id}/events registra la ejecución como activa y emite solo
+     * sus eventos por SSE.
+     */
     @GetMapping(value = "/{id}/events", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public Flux<ServerSentEvent<FlowExecutionEvent>> streamEventsForExecution(@PathVariable UUID id) {
         String executionId = id.toString();

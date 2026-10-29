@@ -5,6 +5,7 @@ import com.floworchestrator.controlcenter.enums.ProcessExecutionStatus;
 import com.floworchestrator.controlcenter.enums.StepExecutionStatus;
 import com.floworchestrator.controlcenter.model.CreateInterventionRequest;
 import com.floworchestrator.controlcenter.model.FlowExecutionEvent;
+import com.floworchestrator.controlcenter.model.ProcessExecutionResponse;
 import com.floworchestrator.controlcenter.model.ProcessExecutionStatusRequest;
 import com.floworchestrator.controlcenter.model.StepExecutionStatusRequest;
 import lombok.RequiredArgsConstructor;
@@ -23,7 +24,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
- * Consume el stream SSE del Orchestrator y registra el bitácora de pasos y
+ * Consume el stream SSE del Orchestrator y registra la bitácora de pasos y
  * ejecuciones en la base de datos del Control Center.
  * <p>
  * La conexión se inicia bajo demanda: la primera vez que un cliente se suscribe
@@ -75,6 +76,10 @@ public class FlowEventSseConsumer {
         }
     }
 
+    /**
+     * Reactiva una ejecución y olvida sus eventos ya procesados, de modo que un
+     * reintento pueda volver a aplicar los mismos tipos de evento.
+     */
     public void reRegisterExecution(String executionId) {
         if (executionId != null && !executionId.isBlank()) {
             activeExecutions.add(executionId);
@@ -90,6 +95,11 @@ public class FlowEventSseConsumer {
         }
     }
 
+    /**
+     * Filtra eventos sin ejecución activa, descarta duplicados por
+     * ejecución/tipo/paso y delega el cambio de estado; el evento se reemite a los
+     * suscriptores SSE aunque ya se hubiera procesado.
+     */
     private void handleEvent(FlowExecutionEvent event) {
         if (event.executionId() == null || event.executionId().isBlank()) {
             log.warn("[SSE] Evento sin executionId; se omite: type={}", event.eventType());
@@ -129,8 +139,7 @@ public class FlowEventSseConsumer {
                 case "STEP_COMPLETED" -> handleStepCompleted(executionId, event);
                 case "STEP_FAILED" -> handleStepFailed(executionId, event);
                 case "STEP_REQUIRES_INTERVENTION" -> handleStepRequiresIntervention(executionId, event);
-                case "FLOW_PAUSED" -> log.info("[SSE] Flujo pausado para intervención humana: executionId={}, step={}",
-                        event.executionId(), event.stepName());
+                case "FLOW_PAUSED" -> handleFlowPaused(executionId, event);
                 case "FLOW_RESUMED" -> {
                     processService.resumeExecution(executionId);
                     log.info("[SSE] Flujo reanudado: executionId={}", event.executionId());
@@ -141,6 +150,10 @@ public class FlowEventSseConsumer {
                 }
                 case "FLOW_FAILED" -> {
                     handleFlowFailed(executionId, event);
+                    activeExecutions.remove(event.executionId());
+                }
+                case "FLOW_CANCELLED" -> {
+                    handleFlowCancelled(executionId, event);
                     activeExecutions.remove(event.executionId());
                 }
                 default -> log.debug("[SSE] Tipo de evento no manejado: {}", event.eventType());
@@ -188,6 +201,10 @@ public class FlowEventSseConsumer {
         processService.updateStepExecution(executionId, event.stepOrder(), request);
     }
 
+    /**
+     * Marca el paso como REQUIRES_INTERVENTION y crea la intervención humana
+     * asociada con los mensajes de error del evento.
+     */
     private void handleStepRequiresIntervention(UUID executionId, FlowExecutionEvent event) {
         log.info("[SSE] El paso requiere intervención humana: executionId={}, step={}, error={}",
                 event.executionId(), event.stepName(), event.errorMessage());
@@ -212,6 +229,28 @@ public class FlowEventSseConsumer {
         processService.createIntervention(executionId, interventionRequest);
     }
 
+    /**
+     * Deja la ejecución en {@code PAUSED_FOR_HUMAN} también cuando el Orchestrator
+     * pausa por una causa que no genera intervención (p. ej. el agente pide más
+     * datos). Sin esto la pantalla seguía mostrando el proceso "en progreso".
+     */
+    private void handleFlowPaused(UUID executionId, FlowExecutionEvent event) {
+        ProcessExecutionStatusRequest request = new ProcessExecutionStatusRequest(
+                ProcessExecutionStatus.PAUSED_FOR_HUMAN,
+                event.stepName(),
+                null,
+                event.userErrorTitle(),
+                event.userErrorMessage(),
+                event.userErrorActionLabel(),
+                event.userErrorStatusType());
+        processService.updateExecutionStatus(executionId, request);
+        log.info("[SSE] Flujo pausado para intervención humana: executionId={}, step={}",
+                event.executionId(), event.stepName());
+    }
+
+    /**
+     * Deja la ejecución en COMPLETED al recibir el cierre del flujo.
+     */
     private void handleFlowCompleted(UUID executionId) {
         processService.updateExecutionStatus(executionId,
                 ProcessExecutionStatusRequest.of(ProcessExecutionStatus.COMPLETED));
@@ -229,11 +268,44 @@ public class FlowEventSseConsumer {
         processService.updateExecutionStatus(executionId, request);
     }
 
+    /**
+     * El rechazo de una intervención ya deja la ejecución cancelada con un
+     * mensaje específico; el evento solo aporta el mensaje genérico, así que no
+     * se pisa un estado cancelado previo.
+     */
+    private void handleFlowCancelled(UUID executionId, FlowExecutionEvent event) {
+        ProcessExecutionResponse current = processService.getExecution(executionId);
+        if (current.status() == ProcessExecutionStatus.CANCELLED) {
+            log.info("[SSE] La ejecución ya estaba cancelada en el Control Center: executionId={}",
+                    event.executionId());
+            return;
+        }
+
+        ProcessExecutionStatusRequest request = new ProcessExecutionStatusRequest(
+                ProcessExecutionStatus.CANCELLED,
+                event.stepName(),
+                event.errorMessage(),
+                event.userErrorTitle(),
+                event.userErrorMessage(),
+                event.userErrorActionLabel(),
+                event.userErrorStatusType());
+        processService.updateExecutionStatus(executionId, request);
+        log.info("[SSE] Flujo cancelado por el orquestador: executionId={}, step={}",
+                event.executionId(), event.stepName());
+    }
+
+    /**
+     * Registra el fallo del stream y permite que una nueva suscripción reconecte.
+     */
     private void handleError(Throwable throwable) {
         log.error("[SSE] Error en el stream de eventos", throwable);
         started.set(false);
     }
 
+    /**
+     * Al cerrarse el stream deja el consumidor en estado detenido para reconectar
+     * bajo demanda.
+     */
     private void handleComplete() {
         log.info("[SSE] Stream de eventos finalizado");
         started.set(false);

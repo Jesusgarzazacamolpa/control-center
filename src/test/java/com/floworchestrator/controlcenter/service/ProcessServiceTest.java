@@ -31,9 +31,14 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.slf4j.MDC;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
@@ -48,6 +53,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -260,7 +266,7 @@ class ProcessServiceTest {
     }
 
     @Test
-    @DisplayName("should mark process as failed and copy user-facing fields")
+    @DisplayName("should mark process as failed and keep user-facing fields on the step")
     void shouldMarkProcessAsFailed() {
         UUID executionId = UUID.randomUUID();
         ProcessExecutionEntity process = execution(executionId);
@@ -280,8 +286,8 @@ class ProcessServiceTest {
         assertEquals(StepExecutionStatus.FAILED, step.status());
         assertEquals("Payment failed", step.errorMessage());
         assertEquals(ProcessExecutionStatus.FAILED, process.getStatus());
-        assertEquals("Error de pago", process.getUserErrorTitle());
-        assertEquals("Reintentar", process.getUserErrorActionLabel());
+        assertNull(process.getUserErrorTitle());
+        assertNull(process.getUserErrorMessage());
         assertNotNull(process.getCompletedAt());
     }
 
@@ -411,7 +417,7 @@ class ProcessServiceTest {
         InterventionEntity entity = intervention(UUID.randomUUID(), InterventionStatus.PENDING_REVIEW);
         when(interventionRepository.findAll()).thenReturn(List.of(entity));
 
-        var interventions = service.listInterventions();
+        var interventions = service.listInterventions(null, null);
 
         assertEquals(1, interventions.size());
         assertEquals(entity.getId().toString(), interventions.get(0).id());
@@ -425,17 +431,59 @@ class ProcessServiceTest {
         when(interventionRepository.findByStatusOrderByCreatedAtDesc(InterventionStatus.PENDING_REVIEW))
                 .thenReturn(List.of(entity));
 
-        var interventions = service.listInterventionsByStatus("pending_review");
+        var interventions = service.listInterventions(null, "pending_review");
 
         assertEquals(1, interventions.size());
         assertEquals(InterventionStatus.PENDING_REVIEW, interventions.get(0).status());
     }
 
     @Test
+    @DisplayName("should list interventions filtered by process")
+    void shouldListInterventionsByProcess() {
+        UUID processId = UUID.randomUUID();
+        InterventionEntity entity = intervention(UUID.randomUUID(), InterventionStatus.PENDING_REVIEW);
+        entity.setProcessExecutionId(processId);
+        when(interventionRepository.findByProcessExecutionIdOrderByCreatedAtDesc(processId))
+                .thenReturn(List.of(entity));
+
+        var interventions = service.listInterventions(processId, null);
+
+        assertEquals(1, interventions.size());
+        assertEquals(processId.toString(), interventions.get(0).processId());
+    }
+
+    @Test
+    @DisplayName("should list interventions filtered by process and status")
+    void shouldListInterventionsByProcessAndStatus() {
+        UUID processId = UUID.randomUUID();
+        InterventionEntity entity = intervention(processId, InterventionStatus.PENDING_REVIEW);
+        when(interventionRepository.findByProcessExecutionIdAndStatusOrderByCreatedAtDesc(
+                processId, InterventionStatus.PENDING_REVIEW)).thenReturn(List.of(entity));
+
+        var interventions = service.listInterventions(processId, " PENDING_REVIEW ");
+
+        assertEquals(1, interventions.size());
+        assertEquals(InterventionStatus.PENDING_REVIEW, interventions.get(0).status());
+    }
+
+    @Test
+    @DisplayName("should treat a blank status filter as no filter")
+    void shouldTreatBlankStatusAsNoFilter() {
+        UUID processId = UUID.randomUUID();
+        InterventionEntity entity = intervention(processId, InterventionStatus.APPROVED);
+        when(interventionRepository.findByProcessExecutionIdOrderByCreatedAtDesc(processId))
+                .thenReturn(List.of(entity));
+
+        var interventions = service.listInterventions(processId, " ");
+
+        assertEquals(1, interventions.size());
+    }
+
+    @Test
     @DisplayName("should reject an unknown intervention status filter")
     void shouldRejectUnknownInterventionStatusFilter() {
         assertThrows(InvalidInterventionStatusException.class,
-                () -> service.listInterventionsByStatus("PENDING"));
+                () -> service.listInterventions(null, "PENDING"));
         verify(interventionRepository, never()).findByStatusOrderByCreatedAtDesc(any());
     }
 
@@ -473,6 +521,10 @@ class ProcessServiceTest {
         ProcessExecutionEntity process = execution(executionId);
         process.setStatus(ProcessExecutionStatus.PAUSED_FOR_HUMAN);
         process.setErrorMessage("paused");
+        process.setUserErrorTitle("Se requiere información adicional");
+        process.setUserErrorMessage("El agente necesita información adicional para continuar.");
+        process.setUserErrorActionLabel("Reanudar proceso");
+        process.setUserErrorStatusType("info");
         when(interventionRepository.findById(interventionId)).thenReturn(Optional.of(entity));
         when(repository.findById(executionId)).thenReturn(Optional.of(process));
         when(repository.save(any(ProcessExecutionEntity.class))).thenAnswer(inv -> inv.getArgument(0));
@@ -485,14 +537,24 @@ class ProcessServiceTest {
         assertEquals("Cliente proporcionó el RFC", updated.resolutionNotes());
         assertEquals(ProcessExecutionStatus.IN_PROGRESS, process.getStatus());
         assertNull(process.getErrorMessage());
+        assertNull(process.getUserErrorTitle());
+        assertNull(process.getUserErrorMessage());
+        assertNull(process.getUserErrorActionLabel());
+        assertNull(process.getUserErrorStatusType());
     }
 
     @Test
-    @DisplayName("should reject intervention without resuming the process")
-    void shouldRejectIntervention() {
+    @DisplayName("should cancel the process when the intervention is rejected")
+    void shouldCancelProcessWhenInterventionIsRejected() {
         UUID interventionId = UUID.randomUUID();
+        UUID executionId = UUID.randomUUID();
         InterventionEntity entity = intervention(interventionId, InterventionStatus.PENDING_REVIEW);
+        entity.setProcessExecutionId(executionId);
+        ProcessExecutionEntity process = execution(executionId);
+        process.setStatus(ProcessExecutionStatus.PAUSED_FOR_HUMAN);
         when(interventionRepository.findById(interventionId)).thenReturn(Optional.of(entity));
+        when(repository.findById(executionId)).thenReturn(Optional.of(process));
+        when(repository.save(any(ProcessExecutionEntity.class))).thenAnswer(inv -> inv.getArgument(0));
         when(interventionRepository.save(any(InterventionEntity.class))).thenAnswer(inv -> inv.getArgument(0));
 
         var updated = service.updateIntervention(interventionId,
@@ -500,7 +562,9 @@ class ProcessServiceTest {
 
         assertEquals(InterventionStatus.REJECTED, updated.status());
         assertEquals("Cliente canceló", updated.resolutionNotes());
-        verify(repository, never()).save(any());
+        assertEquals(ProcessExecutionStatus.CANCELLED, process.getStatus());
+        assertEquals("Proceso cancelado", process.getUserErrorTitle());
+        assertNotNull(process.getCompletedAt());
     }
 
     @Test
@@ -649,19 +713,57 @@ class ProcessServiceTest {
     // ==================== queries ====================
 
     @Test
-    @DisplayName("should list executions with customer id extracted from context")
-    void shouldListExecutions() {
-        ProcessExecutionEntity entity = execution(UUID.randomUUID());
-        entity.setGlobalContext("{\"customerId\":\"customer-001\"}");
-        when(repository.findAll()).thenReturn(List.of(entity));
-        when(stepTemplateRepository.findAllByProcessTemplateIdOrderByStepOrderAsc(TEMPLATE_ID))
-                .thenReturn(List.of(stepTemplate(1, "Paso 1")));
+    @DisplayName("should page executions and load step names in a single query")
+    void shouldListExecutionsWithSingleStepQuery() {
+        ProcessExecutionEntity first = execution(UUID.randomUUID());
+        first.setGlobalContext("{\"customerId\":\"customer-001\"}");
+        ProcessExecutionEntity second = execution(UUID.randomUUID());
+        when(repository.findAll(any(Pageable.class)))
+                .thenReturn(new PageImpl<>(List.of(first, second), PageRequest.of(0, 10), 25));
+        when(stepTemplateRepository.findAllByProcessTemplateIdInOrderByStepOrderAsc(any()))
+                .thenReturn(List.of(stepTemplate(1, "Paso 1"), stepTemplate(2, "Paso 2")));
 
-        var executions = service.listExecutions();
+        var page = service.listExecutions(0, 10);
 
-        assertEquals(1, executions.size());
-        assertEquals("customer-001", executions.get(0).customerId());
-        assertEquals(List.of("Paso 1"), executions.get(0).steps());
+        assertEquals(2, page.content().size());
+        assertEquals(0, page.page());
+        assertEquals(10, page.size());
+        assertEquals(25, page.totalElements());
+        assertEquals(3, page.totalPages());
+        assertEquals("customer-001", page.content().get(0).customerId());
+        assertEquals(List.of("Paso 1", "Paso 2"), page.content().get(1).steps());
+        verify(stepTemplateRepository, times(1))
+                .findAllByProcessTemplateIdInOrderByStepOrderAsc(any());
+        verify(stepTemplateRepository, never())
+                .findAllByProcessTemplateIdOrderByStepOrderAsc(any());
+    }
+
+    @Test
+    @DisplayName("should request the newest executions first")
+    void shouldSortExecutionsByStartedAtDescending() {
+        when(repository.findAll(any(Pageable.class)))
+                .thenReturn(new PageImpl<>(List.of(), PageRequest.of(0, 10), 0));
+
+        service.listExecutions(0, 10);
+
+        ArgumentCaptor<Pageable> pageable = ArgumentCaptor.forClass(Pageable.class);
+        verify(repository).findAll(pageable.capture());
+        assertEquals(Sort.Direction.DESC,
+                pageable.getValue().getSort().getOrderFor("startedAt").getDirection());
+    }
+
+    @Test
+    @DisplayName("should not query step templates when the page is empty")
+    void shouldSkipStepQueryWhenPageIsEmpty() {
+        when(repository.findAll(any(Pageable.class)))
+                .thenReturn(new PageImpl<>(List.of(), PageRequest.of(0, 10), 0));
+
+        var page = service.listExecutions(0, 10);
+
+        assertEquals(List.of(), page.content());
+        assertEquals(0, page.totalElements());
+        verify(stepTemplateRepository, never())
+                .findAllByProcessTemplateIdInOrderByStepOrderAsc(any());
     }
 
     @Test

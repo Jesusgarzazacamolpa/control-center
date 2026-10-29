@@ -17,6 +17,9 @@ public record StepExecutionStatusRequest(
         String userErrorStatusType
 ) {
 
+    /**
+     * Atajo para cambiar solo el estatus del paso, sin mensajes de error.
+     */
     public static StepExecutionStatusRequest of(StepExecutionStatus status) {
         return new StepExecutionStatusRequest(status, null, null, null, null, null);
     }

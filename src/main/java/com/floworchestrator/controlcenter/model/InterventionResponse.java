@@ -4,9 +4,12 @@ import com.floworchestrator.controlcenter.enums.InterventionStatus;
 
 import java.time.OffsetDateTime;
 
+/**
+ * Representación de una intervención devuelta por la API.
+ */
 public record InterventionResponse(
         String id,
-        String processId,
+        String processId, // Identificador de la ejecución de proceso asociada.
         String stepName,
         int stepOrder,
         InterventionStatus status,

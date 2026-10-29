@@ -32,4 +32,11 @@ public interface OrchestratorClient {
      * Solicita reintentar un paso específico.
      */
     void retryStep(String executionId, int stepOrder);
+
+    /**
+     * Solicita cancelar una ejecución y descartar su estado guardado.
+     *
+     * @return {@code false} cuando el Orchestrator no tiene estado que cancelar (404).
+     */
+    boolean cancelFlow(String executionId);
 }

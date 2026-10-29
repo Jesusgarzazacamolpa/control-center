@@ -56,11 +56,27 @@ public class FlowInvocationService {
             throw new InvalidProcessStateException(executionId, current.status());
         }
 
-        flowEventSseConsumer.reRegisterExecution(executionId.toString());
-        if (!resumeFlow(executionId, userInput)) {
-            restartFlow(executionId);
-        }
+        resumeOrRestartFlow(executionId, userInput);
         return processService.getExecution(executionId);
+    }
+
+    /**
+     * Reanuda la ejecución y, si el Orchestrator ya no tiene el estado pausado
+     * (por ejemplo, tras un reinicio), la reinicia desde el principio para que
+     * el proceso no quede detenido. En ambos casos se vuelve a registrar la
+     * ejecución en el consumidor SSE.
+     *
+     * @return {@code true} si se reanudó; {@code false} si se reinició el flujo.
+     */
+    public boolean resumeOrRestartFlow(UUID executionId, String userInput) {
+        flowEventSseConsumer.reRegisterExecution(executionId.toString());
+        if (resumeFlow(executionId, userInput)) {
+            return true;
+        }
+        log.warn("[RESUME] El orquestador perdió el estado pausado; se reinicia el flujo: executionId={}",
+                executionId);
+        restartFlow(executionId);
+        return false;
     }
 
     /**
@@ -77,6 +93,25 @@ public class FlowInvocationService {
             log.warn("[RESUME] No se encontró estado pausado; se requiere reinicio de respaldo: executionId={}", executionId);
         }
         return resumed;
+    }
+
+    /**
+     * Notifica al Orchestrator que cancele la ejecución y descarte su estado.
+     * No existe estado que descartar cuando el flujo ya había terminado o el
+     * Orchestrator se reinició; ese caso no debe romper el rechazo de la
+     * intervención, que ya quedó registrado en el Control Center.
+     *
+     * @return {@code false} cuando el Orchestrator no tenía estado cancelable.
+     */
+    public boolean cancelFlow(UUID executionId) {
+        log.info("[CANCEL] Notificando al orquestador para cancelar la ejecución: executionId={}", executionId);
+        boolean cancelled = orchestratorClient.cancelFlow(executionId.toString());
+        if (cancelled) {
+            log.info("[CANCEL] El orquestador canceló la ejecución: executionId={}", executionId);
+        } else {
+            log.warn("[CANCEL] No había estado cancelable en el orquestador: executionId={}", executionId);
+        }
+        return cancelled;
     }
 
     /**
@@ -109,6 +144,10 @@ public class FlowInvocationService {
                 executionId, stepOrder);
     }
 
+    /**
+     * Envía el comando de arranque de forma asíncrona: el resultado del flujo no
+     * bloquea la petición y un fallo se persiste como ejecución FAILED.
+     */
     private void startFlow(UUID executionId, String flowName, ProcessExecutionRequest request) {
         FlowStartCommand command = new FlowStartCommand(
                 executionId.toString(),
@@ -124,6 +163,10 @@ public class FlowInvocationService {
                 error -> handleStartFailure(executionId, error));
     }
 
+    /**
+     * Resuelve el nombre de la plantilla que espera el Orchestrator; si el id no
+     * existe o no es UUID usa el flujo predeterminado.
+     */
     private String resolveTemplateName(String processTemplateId) {
         try {
             return processTemplateRepository.findById(UUID.fromString(processTemplateId))

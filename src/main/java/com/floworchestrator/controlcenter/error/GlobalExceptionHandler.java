@@ -36,12 +36,19 @@ public class GlobalExceptionHandler {
     private static final String VALIDATION_MESSAGE = "Revisa los datos ingresados: ";
     private static final String GENERIC_VALIDATION_MESSAGE = "Revisa los datos ingresados e intenta nuevamente.";
 
+    /**
+     * Traduce las excepciones de dominio que ya traen estatus, código de flujo y
+     * mensaje para el usuario.
+     */
     @ExceptionHandler(AppException.class)
     public ResponseEntity<ApiError> handleAppException(AppException ex, HttpServletRequest request) {
         logHandled(ex.getStatus(), ex.getFlowCode(), ex, request);
         return respond(ex.getStatus(), ex.getFlowCode(), ex.getUserMessage(), null, request);
     }
 
+    /**
+     * Convierte los errores de {@code @Valid} en una lista de campos inválidos.
+     */
     @ExceptionHandler(MethodArgumentNotValidException.class)
     public ResponseEntity<ApiError> handleValidation(MethodArgumentNotValidException ex,
                                                      HttpServletRequest request) {
@@ -58,6 +65,10 @@ public class GlobalExceptionHandler {
         return respond(HttpStatus.BAD_REQUEST, FlowCode.VALIDATION, message, details, request);
     }
 
+    /**
+     * Convierte las violaciones de restricciones de parámetros (p. ej. {@code @Min})
+     * en el mismo contrato de validación.
+     */
     @ExceptionHandler(ConstraintViolationException.class)
     public ResponseEntity<ApiError> handleConstraintViolation(ConstraintViolationException ex,
                                                               HttpServletRequest request) {
@@ -72,6 +83,9 @@ public class GlobalExceptionHandler {
         return respond(HttpStatus.BAD_REQUEST, FlowCode.VALIDATION, message, details, request);
     }
 
+    /**
+     * Responde 400 cuando el cuerpo no es JSON válido o contiene valores no permitidos.
+     */
     @ExceptionHandler(HttpMessageNotReadableException.class)
     public ResponseEntity<ApiError> handleUnreadableBody(HttpMessageNotReadableException ex,
                                                          HttpServletRequest request) {
@@ -81,6 +95,10 @@ public class GlobalExceptionHandler {
                 null, request);
     }
 
+    /**
+     * Responde 400 con un mensaje específico cuando un path variable o query param
+     * no se puede convertir al tipo esperado (por ejemplo, un UUID mal formado).
+     */
     @ExceptionHandler(MethodArgumentTypeMismatchException.class)
     public ResponseEntity<ApiError> handleTypeMismatch(MethodArgumentTypeMismatchException ex,
                                                        HttpServletRequest request) {
@@ -91,6 +109,9 @@ public class GlobalExceptionHandler {
         return respond(HttpStatus.BAD_REQUEST, FlowCode.BAD_REQUEST, message, null, request);
     }
 
+    /**
+     * Responde 400 indicando el nombre del parámetro obligatorio que falta.
+     */
     @ExceptionHandler(MissingServletRequestParameterException.class)
     public ResponseEntity<ApiError> handleMissingParameter(MissingServletRequestParameterException ex,
                                                            HttpServletRequest request) {
@@ -100,6 +121,9 @@ public class GlobalExceptionHandler {
                 null, request);
     }
 
+    /**
+     * Responde 405 cuando el verbo HTTP no está mapeado en la ruta.
+     */
     @ExceptionHandler(HttpRequestMethodNotSupportedException.class)
     public ResponseEntity<ApiError> handleMethodNotSupported(HttpRequestMethodNotSupportedException ex,
                                                              HttpServletRequest request) {
@@ -109,6 +133,9 @@ public class GlobalExceptionHandler {
                 null, request);
     }
 
+    /**
+     * Responde 415 cuando el {@code Content-Type} no es {@code application/json}.
+     */
     @ExceptionHandler(HttpMediaTypeNotSupportedException.class)
     public ResponseEntity<ApiError> handleUnsupportedMediaType(HttpMediaTypeNotSupportedException ex,
                                                                HttpServletRequest request) {
@@ -118,6 +145,9 @@ public class GlobalExceptionHandler {
                 null, request);
     }
 
+    /**
+     * Responde 404 cuando la ruta solicitada no existe.
+     */
     @ExceptionHandler(NoResourceFoundException.class)
     public ResponseEntity<ApiError> handleNoResource(NoResourceFoundException ex, HttpServletRequest request) {
         logHandled(HttpStatus.NOT_FOUND, FlowCode.RESOURCE_NOT_FOUND, ex, request);
@@ -136,6 +166,9 @@ public class GlobalExceptionHandler {
                 request != null ? request.getRequestURI() : "unknown", ex.getMessage());
     }
 
+    /**
+     * Red de seguridad: registra el stacktrace y responde 500 con un mensaje genérico.
+     */
     @ExceptionHandler(Exception.class)
     public ResponseEntity<ApiError> handleUnexpected(Exception ex, HttpServletRequest request) {
         logHandled(HttpStatus.INTERNAL_SERVER_ERROR, FlowCode.INTERNAL, ex, request);
@@ -157,6 +190,9 @@ public class GlobalExceptionHandler {
         return ResponseEntity.status(status).body(body);
     }
 
+    /**
+     * Los 5xx se registran con stacktrace; los 4xx solo como advertencia.
+     */
     private void logHandled(HttpStatus status, String flowCode, Exception ex, HttpServletRequest request) {
         String path = request != null ? request.getRequestURI() : "unknown";
         if (status.is5xxServerError()) {

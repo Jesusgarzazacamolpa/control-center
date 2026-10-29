@@ -17,6 +17,10 @@ import lombok.NoArgsConstructor;
 import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.type.SqlTypes;
 
+/**
+ * Intervención humana sobre una ejecución pausada (tabla {@code human_intervention}).
+ * Guarda los mensajes de error visibles al usuario y el estado de revisión.
+ */
 @Entity
 @Table(name = "human_intervention")
 @Data
